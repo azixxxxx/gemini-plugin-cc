@@ -130,7 +130,9 @@ Use it when you want Gemini to:
 - continue a previous Gemini task
 - take a second pass with a different model
 
-Rescue runs are write-capable by default. Gemini edits files in your working tree and does not commit or push; Claude Code and you review the result.
+Rescue runs are write-capable by default. Gemini edits files in your working tree and does not commit or push; Claude Code and you review the result. The output ends with the files git saw change during the run, so you do not have to rely on Gemini's own account of its edits.
+
+Claude Code can also hand work to the `gemini:gemini-rescue` subagent on its own, for a second opinion when it is stuck. Such delegation runs read-only: Gemini only gets write access when you asked for changes, for example through `/gemini:rescue`.
 
 It supports `--background`, `--wait`, `--resume`, `--fresh`, `--model`, and `--effort`. If you omit `--resume` and `--fresh`, the plugin can offer to continue the latest rescue conversation for this repository.
 
@@ -153,12 +155,12 @@ Ask Gemini to redesign the database connection to be more resilient.
 **Notes:**
 
 - If you do not pass `--model`, agy uses its default model. `--model flash` and `--model pro` pick the first Flash or Pro model in the order `agy models` lists them for your account; any other name goes to agy unchanged. Your account may not offer a Pro model at all.
-- `--effort` accepts `low`, `medium`, `high`, `xhigh`, and `max`, but each model supports only some of them: Gemini 3.8 Flash accepts `low`, `medium`, and `high`. A model name that already ends in an effort, such as `gemini-3.8-flash-low`, cannot be combined with `--effort`.
+- `--effort` accepts `low`, `medium`, `high`, `xhigh`, and `max`, but each model supports only some of them: Gemini 3.8 Flash accepts `low`, `medium`, and `high`, and the Claude models agy offers accept no `--effort` at all. A model name that already ends in an effort, such as `gemini-3.8-flash-low`, cannot be combined with `--effort`.
 - Follow-up rescue requests can continue the latest Gemini conversation in the repository.
 
 ### `/gemini:status`
 
-Shows running and recent Gemini jobs for the current repository.
+Shows running and recent Gemini jobs for the current repository. A job whose process died without finishing, for example after a restart, is marked as failed instead of staying "running".
 
 Examples:
 
@@ -208,10 +210,22 @@ It also manages three per-repository switches:
 
 `--disable-web` turns off web, browser, and MCP tools for write-capable runs in the repository; read-only runs never have them.
 
-When the review gate is enabled, the plugin uses a `Stop` hook to run a Gemini review of Claude's last turn against the current working tree. If that review finds issues, the stop is blocked so Claude can address them first.
+When the review gate is enabled, the plugin uses a `Stop` hook to run a Gemini review of Claude's last turn against the current working tree. If that review finds issues, the stop is blocked so Claude can address them first. To keep the gate from trapping a session:
+
+- After three blocks in a row in one session, the next stop goes through with a message that repeats the last finding.
+- If the review cannot run, for example because the sign-in expired, the quota is used up, or the review took longer than 13 minutes, the stop goes through with a message that says why.
+
+The gate can use its own model and effort, which helps because agy counts quota per model:
+
+```bash
+/gemini:setup --review-gate-model flash --review-gate-effort low
+/gemini:setup --review-gate-model default --review-gate-effort default
+```
+
+Settings apply to the whole repository, including its git worktrees, such as the ones Claude Code creates for desktop sessions.
 
 > [!WARNING]
-> The review gate can create a long-running Claude/Gemini loop and may use up quota quickly. Only enable it when you plan to actively monitor the session.
+> The review gate runs a Gemini review at the end of every Claude turn, so it uses quota quickly. Only enable it when you plan to actively monitor the session.
 
 ## Typical Flows
 

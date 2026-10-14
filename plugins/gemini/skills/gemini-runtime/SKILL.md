@@ -8,8 +8,17 @@ user-invocable: false
 
 Use this skill only inside the `gemini:gemini-rescue` subagent.
 
-Primary helper:
-- `node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" task "<raw arguments>"`
+Primary helper, with the task text on stdin:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" task --write <<'GEMINI_TASK'
+<task text>
+GEMINI_TASK
+```
+
+- Runtime flags (`--write`, `--resume-last`, `--model`, `--effort`) go on the command line before the heredoc.
+- Never pass the task text as a command-line argument: quotes in it would need shell escaping, and some endpoint security tools kill processes with long command lines.
+- `task --resume-last` without new instructions needs no heredoc.
 
 Execution rules:
 - The rescue subagent is a forwarder, not an orchestrator. Its only job is to invoke `task` once and return that stdout unchanged.
@@ -21,7 +30,7 @@ Execution rules:
 - Leave `--effort` unset unless the user explicitly requests a specific effort.
 - Leave model unset by default. Add `--model` only when the user explicitly asks for one.
 - `pro` and `flash` are plugin shortcuts for the first matching model in `agy models`; other names go to agy unchanged.
-- Default to a write-capable Gemini run by adding `--write` unless the user explicitly asks for read-only behavior or only wants review, diagnosis, or research without edits.
+- Add `--write` only when the forwarded request contains `--write` or the user explicitly asked Gemini to change files. Delegation that Claude starts on its own initiative runs read-only.
 
 Command selection:
 - Use exactly one `task` invocation per rescue handoff.
@@ -36,7 +45,7 @@ Command selection:
 - `task --resume-last`: internal helper for "keep going", "resume", "apply the top fix", or "dig deeper" after a previous rescue run.
 
 Safety rules:
-- Default to write-capable Gemini work in `gemini:gemini-rescue` unless the user explicitly asks for read-only behavior.
+- Write-capable work needs the user's request: `--write` in the forwarded request, which `/gemini:rescue` adds by default, or an explicit request to change files.
 - Write-capable runs pass `--dangerously-skip-permissions` to agy, so Gemini can edit files and run commands without prompts. They also pass `--sandbox` unless the repository disabled it with `/gemini:setup --disable-sandbox`. The plugin's tool guard blocks `git commit`, `git push`, edits outside the repository and temp folders, and subagents.
 - Read-only runs omit that flag, and the tool guard limits Gemini to viewing files inside the repository: no edits, shell commands, web, MCP tools, or subagents. agy offers no folder listing or search without shell commands, so the companion adds the repository's file list to read-only prompts.
 - Preserve the user's task text as-is apart from stripping routing flags.

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 
 import { describeSandbox } from "./agy.mjs";
-import { getConfig, listJobs, readJobFile, resolveJobFile } from "./state.mjs";
+import { getConfig, listJobs, readJobFile, resolveJobFile, updateState, writeJobFile } from "./state.mjs";
 import { SESSION_ID_ENV } from "./tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
@@ -175,6 +175,50 @@ export function enrichJob(job, options = {}) {
   };
 }
 
+export const STALE_JOB_MESSAGE =
+  "The Gemini job's process exited without finishing, for example after a restart, a crash, or a killed terminal.";
+
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+function isStale(job) {
+  return (job.status === "queued" || job.status === "running") && Number.isInteger(job.pid) && job.pid > 0 && !processAlive(job.pid);
+}
+
+/**
+ * Marks queued or running jobs whose process is gone as failed, so a worker that died without
+ * cleaning up does not stay "running" forever and block resuming. Returns the ids it changed.
+ */
+export function reconcileStaleJobs(workspaceRoot) {
+  if (!listJobs(workspaceRoot).some(isStale)) {
+    return [];
+  }
+  const completedAt = new Date().toISOString();
+  const staleIds = [];
+  updateState(workspaceRoot, (state) => {
+    for (const job of state.jobs) {
+      // Check again under the lock: the job may have finished in the meantime.
+      if (isStale(job)) {
+        Object.assign(job, { status: "failed", phase: "failed", pid: null, geminiPid: null, completedAt, updatedAt: completedAt, errorMessage: STALE_JOB_MESSAGE });
+        staleIds.push(job.id);
+      }
+    }
+  });
+  for (const id of staleIds) {
+    const stored = readStoredJob(workspaceRoot, id);
+    if (stored && (stored.status === "queued" || stored.status === "running")) {
+      writeJobFile(workspaceRoot, id, { ...stored, status: "failed", phase: "failed", pid: null, geminiPid: null, completedAt, errorMessage: STALE_JOB_MESSAGE });
+    }
+  }
+  return staleIds;
+}
+
 export function readStoredJob(workspaceRoot, jobId) {
   const jobFile = resolveJobFile(workspaceRoot, jobId);
   if (!fs.existsSync(jobFile)) {
@@ -207,6 +251,7 @@ function matchJobReference(jobs, reference, predicate = () => true) {
 
 export function buildStatusSnapshot(cwd, options = {}) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
+  reconcileStaleJobs(workspaceRoot);
   const config = getConfig(workspaceRoot);
   const jobs = sortJobsNewestFirst(filterJobsForCurrentSession(listJobs(workspaceRoot), options));
   const maxJobs = options.maxJobs ?? DEFAULT_MAX_STATUS_JOBS;
@@ -236,6 +281,7 @@ export function buildStatusSnapshot(cwd, options = {}) {
 
 export function buildSingleJobSnapshot(cwd, reference, options = {}) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
+  reconcileStaleJobs(workspaceRoot);
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
   const selected = matchJobReference(jobs, reference);
   if (!selected) {
@@ -250,6 +296,7 @@ export function buildSingleJobSnapshot(cwd, reference, options = {}) {
 
 export function resolveResultJob(cwd, reference) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
+  reconcileStaleJobs(workspaceRoot);
   const jobs = sortJobsNewestFirst(reference ? listJobs(workspaceRoot) : filterJobsForCurrentSession(listJobs(workspaceRoot)));
   const selected = matchJobReference(
     jobs,
@@ -275,6 +322,7 @@ export function resolveResultJob(cwd, reference) {
 
 export function resolveCancelableJob(cwd, reference, options = {}) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
+  reconcileStaleJobs(workspaceRoot);
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
   const activeJobs = jobs.filter((job) => job.status === "queued" || job.status === "running");
 

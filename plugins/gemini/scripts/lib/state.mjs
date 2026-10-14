@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { resolveWorkspaceRoot } from "./workspace.mjs";
+import { resolveSettingsRoot, resolveWorkspaceRoot } from "./workspace.mjs";
 
 const STATE_VERSION = 1;
 // Claude Code gives each plugin its own CLAUDE_PLUGIN_DATA in hook processes, but Bash tool
@@ -221,6 +221,25 @@ export function updateState(cwd, mutate) {
   });
 }
 
+/** Reads a JSON side file in the workspace's state folder, or {} when it is missing or broken. */
+export function readStateFile(cwd, fileName) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(resolveStateDir(cwd), fileName), "utf8")) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** Updates a JSON side file under the state lock and returns what `mutate` returned. */
+export function updateStateFile(cwd, fileName, mutate) {
+  return withStateLock(cwd, () => {
+    const data = readStateFile(cwd, fileName);
+    const result = mutate(data);
+    writeFileAtomic(path.join(resolveStateDir(cwd), fileName), `${JSON.stringify(data, null, 2)}\n`);
+    return result;
+  });
+}
+
 export function generateJobId(prefix = "job") {
   const random = Math.random().toString(36).slice(2, 8);
   return `${prefix}-${Date.now().toString(36)}-${random}`;
@@ -250,8 +269,9 @@ export function listJobs(cwd) {
   return loadState(cwd).jobs;
 }
 
+// Settings live with the repository's main working tree; jobs stay with each worktree.
 export function setConfig(cwd, key, value) {
-  return updateState(cwd, (state) => {
+  return updateState(resolveSettingsRoot(cwd), (state) => {
     state.config = {
       ...state.config,
       [key]: value
@@ -260,7 +280,7 @@ export function setConfig(cwd, key, value) {
 }
 
 export function getConfig(cwd) {
-  return loadState(cwd).config;
+  return loadState(resolveSettingsRoot(cwd)).config;
 }
 
 export function writeJobFile(cwd, jobId, payload) {

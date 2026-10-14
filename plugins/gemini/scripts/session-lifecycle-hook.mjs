@@ -24,11 +24,28 @@ function shellEscape(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
 
+/**
+ * Appends an export to CLAUDE_ENV_FILE unless the same line is already there. SessionStart runs
+ * again on resume and after compaction, and the file persists, so unconditional appends made it
+ * grow with every start until Bash calls failed with E2BIG in long sessions.
+ */
 function appendEnvVar(name, value) {
-  if (!process.env.CLAUDE_ENV_FILE || value == null || value === "") {
+  const envFile = process.env.CLAUDE_ENV_FILE;
+  if (!envFile || value == null || value === "") {
     return;
   }
-  fs.appendFileSync(process.env.CLAUDE_ENV_FILE, `export ${name}=${shellEscape(value)}\n`, "utf8");
+  const line = `export ${name}=${shellEscape(value)}`;
+  let existing = "";
+  try {
+    existing = fs.readFileSync(envFile, "utf8");
+  } catch {
+    // The file does not exist yet.
+  }
+  if (existing.split(/\r?\n/).includes(line)) {
+    return;
+  }
+  const separator = existing && !existing.endsWith("\n") ? "\n" : "";
+  fs.appendFileSync(envFile, `${separator}${line}\n`, "utf8");
 }
 
 function cleanupSessionJobs(cwd, sessionId) {

@@ -115,7 +115,11 @@ test("rescue command absorbs continue semantics and routes through the Gemini su
   assert.match(agent, /Do not call `review`, `adversarial-review`, `status`, `result`, or `cancel`/i);
   assert.match(agent, /Leave `--effort` unset unless the user explicitly requests/i);
   assert.match(agent, /Leave model unset by default/i);
-  assert.match(agent, /Default to a write-capable Gemini run by adding `--write`/i);
+  assert.match(agent, /^model: inherit$/m);
+  assert.match(agent, /Proactively use for a read-only second opinion/);
+  assert.match(agent, /Add `--write` only when the forwarded request contains `--write`/);
+  assert.match(agent, /<<'GEMINI_TASK'/);
+  assert.match(rescue, /add `--write` to the forwarded request unless the user asked for read-only work/i);
   assert.match(agent, /Return the stdout of the `gemini-companion` command exactly as-is/i);
   assert.match(agent, /If the Bash call fails or Gemini cannot be invoked, return nothing/i);
   assert.match(agent, /gemini-prompting/);
@@ -154,7 +158,8 @@ test("internal docs use task terminology and Gemini prompting guidance", () => {
   const promptingSkill = read("skills/gemini-prompting/SKILL.md");
   const promptRecipes = read("skills/gemini-prompting/references/gemini-prompt-recipes.md");
 
-  assert.match(runtimeSkill, /gemini-companion\.mjs" task "<raw arguments>"/);
+  assert.match(runtimeSkill, /gemini-companion\.mjs" task --write <<'GEMINI_TASK'/);
+  assert.match(runtimeSkill, /Never pass the task text as a command-line argument/);
   assert.match(runtimeSkill, /Use `task` for every rescue request/i);
   assert.match(runtimeSkill, /task --resume-last/i);
   assert.match(promptingSkill, /Use `task` when the task is diagnosis/i);
@@ -177,7 +182,7 @@ test("setup command points to the Gemini app's agy and keeps sign-in in the user
   const setup = read("commands/setup.md");
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
 
-  assert.match(setup, /argument-hint:\s*'\[--enable-review-gate\|--disable-review-gate\] \[--enable-sandbox\|--disable-sandbox\] \[--enable-web\|--disable-web\]'/);
+  assert.match(setup, /argument-hint:\s*'\[--enable-review-gate\|--disable-review-gate\] \[--review-gate-model <model\|default>\] \[--review-gate-effort <effort\|default>\] \[--enable-sandbox\|--disable-sandbox\] \[--enable-web\|--disable-web\]'/);
   assert.match(setup, /allowed-tools:\s*Bash\(node:\*\)$/m);
   assert.doesNotMatch(setup, /npm install/);
   assert.match(setup, /`agy install`/);

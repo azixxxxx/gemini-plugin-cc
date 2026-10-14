@@ -9,15 +9,21 @@ import { fileURLToPath } from "node:url";
 import { getAgyAvailability } from "./lib/agy.mjs";
 import { collectReviewContext } from "./lib/git.mjs";
 import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
-import { getConfig, listJobs, PLUGIN_DATA_ENV } from "./lib/state.mjs";
-import { sortJobsNewestFirst } from "./lib/job-control.mjs";
+import { getConfig, listJobs, PLUGIN_DATA_ENV, updateStateFile } from "./lib/state.mjs";
+import { reconcileStaleJobs, sortJobsNewestFirst } from "./lib/job-control.mjs";
 import { SESSION_ID_ENV } from "./lib/tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 
 // In hook processes CLAUDE_PLUGIN_DATA belongs to this plugin; the companion inherits the copy.
 process.env[PLUGIN_DATA_ENV] ||= process.env.CLAUDE_PLUGIN_DATA ?? "";
 
-const STOP_REVIEW_TIMEOUT_MS = 15 * 60 * 1000;
+// Below the hook's own 900-second limit, so a slow review still ends with a message.
+const STOP_REVIEW_TIMEOUT_MS = 13 * 60 * 1000;
+// After this many blocks in a row in one session the gate lets the stop through, so a finding
+// Claude cannot fix does not loop until Claude Code's own continuation cap.
+const MAX_CONSECUTIVE_BLOCKS = 3;
+const GATE_STATE_FILE = "review-gate.json";
+const GATE_STATE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const STOP_REVIEW_CONTEXT_MAX_BYTES = 256 * 1024;
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(SCRIPT_DIR, "..");
@@ -85,44 +91,44 @@ function buildSetupNote(cwd) {
   return `Gemini is not set up for the review gate.${detail} Run /gemini:setup.`;
 }
 
+/**
+ * Turns the review's final message into a verdict: "allow", "block", or "error" when the review
+ * did not produce a usable answer.
+ */
 function parseStopReviewOutput(rawOutput) {
   const text = String(rawOutput ?? "").trim();
   if (!text) {
-    return {
-      ok: false,
-      reason:
-        "The stop-time Gemini review task returned no final output. Run /gemini:review --wait manually or bypass the gate."
-    };
+    return { verdict: "error", reason: "The review returned no final output." };
   }
 
   const firstLine = text.split(/\r?\n/, 1)[0].trim();
   if (firstLine.startsWith("ALLOW:")) {
-    return { ok: true, reason: null };
+    return { verdict: "allow", reason: null };
   }
   if (firstLine.startsWith("BLOCK:")) {
     const reason = firstLine.slice("BLOCK:".length).trim() || text;
     return {
-      ok: false,
+      verdict: "block",
       reason: `Gemini stop-time review found issues that still need fixes before ending the session: ${reason}`
     };
   }
 
-  return {
-    ok: false,
-    reason:
-      "The stop-time Gemini review task returned an unexpected answer. Run /gemini:review --wait manually or bypass the gate."
-  };
+  return { verdict: "error", reason: "The review answered without the ALLOW or BLOCK line it was asked for." };
 }
 
-function runStopReview(cwd, input = {}) {
+function runStopReview(cwd, input = {}, config = {}) {
   const scriptPath = path.join(SCRIPT_DIR, "gemini-companion.mjs");
   const prompt = buildStopReviewPrompt(cwd, input);
   const childEnv = {
     ...process.env,
     ...(input.session_id ? { [SESSION_ID_ENV]: input.session_id } : {})
   };
+  const runtimeArgs = [
+    ...(config.reviewGateModel ? ["--model", String(config.reviewGateModel)] : []),
+    ...(config.reviewGateEffort ? ["--effort", String(config.reviewGateEffort)] : [])
+  ];
   // The prompt carries the working tree, so it goes through stdin instead of argv.
-  const result = spawnSync(process.execPath, [scriptPath, "task", "--json"], {
+  const result = spawnSync(process.execPath, [scriptPath, "task", "--json", ...runtimeArgs], {
     cwd,
     env: childEnv,
     encoding: "utf8",
@@ -132,11 +138,7 @@ function runStopReview(cwd, input = {}) {
   });
 
   if (/** @type {NodeJS.ErrnoException | undefined} */ (result.error)?.code === "ETIMEDOUT") {
-    return {
-      ok: false,
-      reason:
-        "The stop-time Gemini review task timed out after 15 minutes. Run /gemini:review --wait manually or bypass the gate."
-    };
+    return { verdict: "error", reason: `The review did not finish within ${Math.round(STOP_REVIEW_TIMEOUT_MS / 60000)} minutes.` };
   }
 
   if (result.status !== 0) {
@@ -147,24 +149,44 @@ function runStopReview(cwd, input = {}) {
     } catch {
       detail = detail || String(result.stdout || "").trim();
     }
-    return {
-      ok: false,
-      reason: detail
-        ? `The stop-time Gemini review task failed: ${detail}`
-        : "The stop-time Gemini review task failed. Run /gemini:review --wait manually or bypass the gate."
-    };
+    return { verdict: "error", reason: detail ? `The review failed: ${detail}` : "The review failed." };
   }
 
   try {
     const payload = JSON.parse(result.stdout);
     return parseStopReviewOutput(payload?.rawOutput);
   } catch {
-    return {
-      ok: false,
-      reason:
-        "The stop-time Gemini review task returned invalid JSON. Run /gemini:review --wait manually or bypass the gate."
-    };
+    return { verdict: "error", reason: "The review returned invalid JSON." };
   }
+}
+
+/** Counts consecutive blocks per session; returns the count including this block. */
+function recordGateBlock(workspaceRoot, sessionKey) {
+  return updateStateFile(workspaceRoot, GATE_STATE_FILE, (data) => {
+    const now = Date.now();
+    const sessions = data.sessions && typeof data.sessions === "object" ? data.sessions : {};
+    for (const [key, entry] of Object.entries(sessions)) {
+      if (!entry || now - Number(entry.updatedAt ?? 0) > GATE_STATE_MAX_AGE_MS) {
+        delete sessions[key];
+      }
+    }
+    const blocks = Number(sessions[sessionKey]?.consecutiveBlocks ?? 0) + 1;
+    sessions[sessionKey] = { consecutiveBlocks: blocks, updatedAt: now };
+    data.sessions = sessions;
+    return blocks;
+  });
+}
+
+function resetGateBlocks(workspaceRoot, sessionKey) {
+  updateStateFile(workspaceRoot, GATE_STATE_FILE, (data) => {
+    if (data.sessions && typeof data.sessions === "object") {
+      delete data.sessions[sessionKey];
+    }
+  });
+}
+
+function withNote(message, note) {
+  return note ? `${message} ${note}` : message;
 }
 
 function main() {
@@ -173,6 +195,7 @@ function main() {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   const config = getConfig(workspaceRoot);
 
+  reconcileStaleJobs(workspaceRoot);
   const jobs = sortJobsNewestFirst(filterJobsForCurrentSession(listJobs(workspaceRoot), input));
   const runningJob = jobs.find((job) => job.status === "queued" || job.status === "running");
   const runningTaskNote = runningJob
@@ -186,16 +209,38 @@ function main() {
 
   const setupNote = buildSetupNote(cwd);
   if (setupNote) {
-    logNote(setupNote);
-    logNote(runningTaskNote);
+    emitDecision({ systemMessage: withNote(setupNote, runningTaskNote) });
     return;
   }
 
-  const review = runStopReview(cwd, input);
-  if (!review.ok) {
+  const sessionKey = input.session_id || process.env[SESSION_ID_ENV] || "default";
+  const review = runStopReview(cwd, input, config);
+
+  if (review.verdict === "block") {
+    const blocks = recordGateBlock(workspaceRoot, sessionKey);
+    if (blocks > MAX_CONSECUTIVE_BLOCKS) {
+      resetGateBlocks(workspaceRoot, sessionKey);
+      emitDecision({
+        systemMessage: withNote(
+          `The Gemini review gate blocked ${MAX_CONSECUTIVE_BLOCKS} times in a row in this session, so this stop goes through. Last finding: ${review.reason} Run /gemini:review --wait to see all findings.`,
+          runningTaskNote
+        )
+      });
+      return;
+    }
+    emitDecision({ decision: "block", reason: withNote(review.reason, runningTaskNote) });
+    return;
+  }
+
+  resetGateBlocks(workspaceRoot, sessionKey);
+  if (review.verdict === "error") {
+    // A gate that cannot run must not trap the session: an expired sign-in or a used-up quota
+    // would otherwise block every stop.
     emitDecision({
-      decision: "block",
-      reason: runningTaskNote ? `${runningTaskNote} ${review.reason}` : review.reason
+      systemMessage: withNote(
+        `The Gemini stop-time review could not run, so this stop goes through. ${review.reason} Run /gemini:setup to check Gemini, or /gemini:review --wait to review by hand.`,
+        runningTaskNote
+      )
     });
     return;
   }

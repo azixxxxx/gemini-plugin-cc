@@ -13,13 +13,21 @@ const DIFF_ARGS = ["--no-ext-diff", "--no-textconv", "--submodule=diff"];
 // agy's model can view files but cannot list folders or search, so read-only runs get a file list.
 const REPOSITORY_FILE_LIST_MAX_BYTES = 32 * 1024;
 
+// Print non-ASCII paths as they are, so Gemini can open them; git would show "caf\303\251.js".
+const GIT_CONFIG_ARGS = ["-c", "core.quotePath=false"];
+
 // Git is directly executable on Windows. Repository-derived arguments must never pass through a shell.
 function git(cwd, args, options = {}) {
-  return runCommand("git", args, { cwd, ...options, shell: false });
+  return runCommand("git", [...GIT_CONFIG_ARGS, ...args], { cwd, ...options, shell: false });
 }
 
 function gitChecked(cwd, args, options = {}) {
-  return runCommandChecked("git", args, { cwd, ...options, shell: false });
+  return runCommandChecked("git", [...GIT_CONFIG_ARGS, ...args], { cwd, ...options, shell: false });
+}
+
+// NUL-separated output keeps file names raw; without -z git quotes names such as "caf\303\251.js".
+function listFilesZ(cwd, args) {
+  return String(gitChecked(cwd, [...args, "-z"]).stdout).split("\0").filter(Boolean);
 }
 
 function listUniqueFiles(...groups) {
@@ -151,9 +159,9 @@ export function getCurrentBranch(cwd) {
 }
 
 export function getWorkingTreeState(cwd) {
-  const staged = gitChecked(cwd, ["diff", "--cached", "--name-only"]).stdout.trim().split("\n").filter(Boolean);
-  const unstaged = gitChecked(cwd, ["diff", "--name-only"]).stdout.trim().split("\n").filter(Boolean);
-  const untracked = gitChecked(cwd, ["ls-files", "--others", "--exclude-standard"]).stdout.trim().split("\n").filter(Boolean);
+  const staged = listFilesZ(cwd, ["diff", "--cached", "--name-only"]);
+  const unstaged = listFilesZ(cwd, ["diff", "--name-only"]);
+  const untracked = listFilesZ(cwd, ["ls-files", "--others", "--exclude-standard"]);
 
   return {
     staged,
@@ -223,7 +231,9 @@ export function resolveReviewTarget(cwd, options = {}) {
 
 
 function formatSection(title, body) {
-  return [`## ${title}`, "", body.trim() ? body.trim() : "(none)", ""].join("\n");
+  // Keep leading spaces: `git status --short` puts the index column first, and it is often blank.
+  const text = String(body ?? "").replace(/^(?:[ \t]*\n)+/, "").trimEnd();
+  return [`## ${title}`, "", text.trim() ? text : "(none)", ""].join("\n");
 }
 
 function formatUntrackedFile(cwd, relativePath) {
@@ -327,7 +337,7 @@ function formatOmittedFiles(omittedFiles) {
 }
 
 function collectWorkingTreeContext(cwd, state, budgetBytes) {
-  const status = gitChecked(cwd, ["status", "--short", "--untracked-files=all"]).stdout.trim();
+  const status = gitChecked(cwd, ["status", "--short", "--untracked-files=all"]).stdout.trimEnd();
   const changedFiles = listUniqueFiles(state.staged, state.unstaged, state.untracked);
   const diffs = collectDiffsWithinBudget(
     cwd,
@@ -359,7 +369,7 @@ function collectWorkingTreeContext(cwd, state, budgetBytes) {
 
 function collectBranchContext(cwd, baseRef, budgetBytes, comparison = buildBranchComparison(cwd, baseRef)) {
   const currentBranch = getCurrentBranch(cwd);
-  const changedFiles = gitChecked(cwd, ["diff", "--name-only", comparison.commitRange]).stdout.trim().split("\n").filter(Boolean);
+  const changedFiles = listFilesZ(cwd, ["diff", "--name-only", comparison.commitRange]);
   const logOutput = gitChecked(cwd, ["log", "--oneline", "--decorate", comparison.commitRange]).stdout.trim();
   const diffStat = gitChecked(cwd, ["diff", "--stat", comparison.commitRange]).stdout.trim();
   const diffs = collectDiffsWithinBudget(
@@ -506,6 +516,56 @@ export function snapshotWorkingTree(cwd) {
 }
 
 /** Lists paths whose status changed between two snapshots, or null when nothing changed. */
+/**
+ * Fingerprints every path that `git status` reports (status code, size, and mtime), so a write
+ * run can list the files it actually changed, including files that were already modified.
+ * Returns null outside a git repository.
+ */
+export function snapshotChangedPaths(cwd) {
+  const top = git(cwd, ["rev-parse", "--show-toplevel"]);
+  if (top.error || top.status !== 0) {
+    return null;
+  }
+  const root = top.stdout.trim();
+  const status = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { maxBuffer: SNAPSHOT_MAX_BYTES });
+  if (status.error || status.status !== 0) {
+    return null;
+  }
+  const fields = String(status.stdout).split("\u0000");
+  const paths = new Map();
+  for (let index = 0; index < fields.length; index += 1) {
+    const entry = fields[index];
+    if (entry.length < 4) {
+      continue;
+    }
+    const code = entry.slice(0, 2);
+    const file = entry.slice(3);
+    // Renames and copies carry their source path in the next field.
+    if (code.includes("R") || code.includes("C")) {
+      index += 1;
+    }
+    let fingerprint = `${code}:missing`;
+    try {
+      const stat = fs.statSync(path.join(root, file));
+      fingerprint = `${code}:${stat.size}:${stat.mtimeMs}`;
+    } catch {
+      // Deleted in the working tree.
+    }
+    paths.set(file, fingerprint);
+  }
+  return { root, paths };
+}
+
+/** Lists the paths whose git status or contents differ between two snapshots. */
+export function describeChangedPaths(before, after) {
+  if (!before || !after) {
+    return [];
+  }
+  return [...new Set([...before.paths.keys(), ...after.paths.keys()])]
+    .filter((file) => before.paths.get(file) !== after.paths.get(file))
+    .sort();
+}
+
 export function describeWorkingTreeChanges(before, after) {
   if (!before || !after || before.digest === after.digest) {
     return null;

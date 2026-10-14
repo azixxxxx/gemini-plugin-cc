@@ -158,10 +158,12 @@ export async function runTrackedJob(job, runner, options = {}) {
       return execution;
     }
     const completionStatus = execution.exitStatus === 0 ? "completed" : "failed";
+    const errorMessage = completionStatus === "failed" ? execution.errorMessage ?? null : null;
     const completedAt = nowIso();
     writeJobFile(job.workspaceRoot, job.id, {
       ...runningRecord,
       status: completionStatus,
+      errorMessage,
       threadId: execution.threadId ?? null,
       sandboxed: execution.sandboxed ?? null,
       pid: null,
@@ -177,6 +179,7 @@ export async function runTrackedJob(job, runner, options = {}) {
       threadId: execution.threadId ?? null,
       sandboxed: execution.sandboxed ?? null,
       summary: execution.summary,
+      errorMessage,
       phase: completionStatus === "completed" ? "done" : "failed",
       pid: null,
       geminiPid: null,

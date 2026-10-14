@@ -20,6 +20,10 @@ Modifications by azixxxxx, 2026:
 - Changed review context collection to inline diffs within a byte budget.
 - Made job state writes atomic and serialized read-modify-write updates with a
   lock, so concurrent jobs, commands, and hooks no longer lose records.
+- Fixed other inherited bugs: stale "running" jobs, a review gate that could
+  trap a session, argument parsing of apostrophes and of `--key=value`, review
+  context for the status column and non-ASCII file names, repeated exports in
+  CLAUDE_ENV_FILE, and cancel for processes that lead no process group.
 - Rewrote the tests for the agy runtime.
 
 Licensed under the Apache License, Version 2.0 (the "License");

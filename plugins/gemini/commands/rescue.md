@@ -5,6 +5,7 @@ allowed-tools: Bash(node:*), AskUserQuestion, Agent
 ---
 
 Invoke the `gemini:gemini-rescue` subagent via the `Agent` tool (`subagent_type: "gemini:gemini-rescue"`), forwarding the raw user request as the prompt.
+`/gemini:rescue` is write-capable by default: add `--write` to the forwarded request unless the user asked for read-only work, or only for a review, diagnosis, or research.
 `gemini:gemini-rescue` is a subagent, not a skill: do not call `Skill(gemini:gemini-rescue)` (no such skill) or `Skill(gemini:rescue)` (that re-enters this command and hangs the session). The command runs inline so the `Agent` tool stays in scope; forked general-purpose subagents do not expose it.
 The final user-visible response must be Gemini's output verbatim.
 

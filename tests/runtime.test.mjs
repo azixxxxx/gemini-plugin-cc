@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { buildEnv, flagValue, installFakeAgy, readFakeAgyState } from "./fake-agy-fixture.mjs";
 import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
-import { resolveStateDir } from "../plugins/gemini/scripts/lib/state.mjs";
+import { resolveStateDir, upsertJob, writeJobFile } from "../plugins/gemini/scripts/lib/state.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PLUGIN_ROOT = path.join(ROOT, "plugins", "gemini");
@@ -380,11 +380,14 @@ test("write tasks skip permissions inside the guard and never commit", () => {
   assert.match(invocation.prompt, /^fix the bug\n\n<operating_constraints>/);
   assert.match(invocation.prompt, /do not run git commit, git push/);
   assert.deepEqual(payload.usage, { input_tokens: 30, output_tokens: 12, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 42 });
+  assert.deepEqual(payload.changedFiles, ["app.js"]);
   if (GUARDED) {
     assert.equal(payload.blockedToolCalls.length, 1);
     assert.match(payload.blockedToolCalls[0].reason, /blocks `git commit`/);
     assert.equal(run("git", ["rev-list", "--count", "HEAD"], { cwd: repo }).stdout.trim(), "1");
+    fs.writeFileSync(path.join(repo, "app.js"), "export const broken = true;\n");
     const rendered = companion(["task", "--write", "fix the bug again"], { cwd: repo, env }).stdout;
+    assert.match(rendered, /Changed in the working tree during this run \(from git\):\n- app\.js\n/);
     assert.match(rendered, /Blocked by the plugin's tool guard:\n- run_command: The Gemini plugin blocks `git commit`\.\n\nUsage: 42 tokens \(30 input, 12 output\)\n$/);
   }
 });
@@ -665,7 +668,16 @@ test("session start hook exports the session id and its own plugin data variable
   });
 
   assert.equal(result.status, 0, result.stderr);
+  // SessionStart runs again on resume and compaction; the exports must not pile up.
+  for (let i = 0; i < 2; i += 1) {
+    run("node", [SESSION_HOOK, "SessionStart"], {
+      cwd: ROOT,
+      env,
+      input: JSON.stringify({ hook_event_name: "SessionStart", session_id: "sess-'1", cwd: ROOT })
+    });
+  }
   const exported = fs.readFileSync(envFile, "utf8");
+  assert.equal(exported.trim().split("\n").length, 2, exported);
   assert.match(exported, /export GEMINI_COMPANION_SESSION_ID='sess-'"'"'1'/);
   assert.match(exported, /export GEMINI_COMPANION_PLUGIN_DATA='\/tmp\/gemini plugin data'/);
   // Exporting CLAUDE_PLUGIN_DATA would redirect other plugins' companions to this data dir.
@@ -758,6 +770,108 @@ test("stop hook does not block when agy is unavailable", () => {
   const result = run("node", [STOP_HOOK], { cwd: repo, env, input: JSON.stringify({ cwd: repo }) });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), "");
-  assert.match(result.stderr, /Gemini is not set up for the review gate/);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.decision, undefined);
+  assert.match(output.systemMessage, /Gemini is not set up for the review gate/);
+});
+
+function stopHook(repo, env, sessionId = "gate-session") {
+  const result = run("node", [STOP_HOOK], {
+    cwd: repo,
+    env,
+    input: JSON.stringify({ cwd: repo, session_id: sessionId, last_assistant_message: "I edited README.md." })
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim() ? JSON.parse(result.stdout) : {};
+}
+
+test("stop hook lets the stop through with a message when the review cannot run", () => {
+  const repo = makeDirtyRepo();
+  const { binDir } = setupFake("ok");
+  const env = buildEnv(binDir);
+  assert.equal(companion(["setup", "--enable-review-gate", "--json"], { cwd: repo, env }).status, 0);
+  installFakeAgy(binDir, "auth-failure");
+
+  const output = stopHook(repo, env);
+
+  assert.equal(output.decision, undefined);
+  assert.match(output.systemMessage, /could not run, so this stop goes through\. The review failed: agy is not signed in/);
+});
+
+test("stop hook stops blocking after three blocks in a row in one session", () => {
+  const repo = makeDirtyRepo();
+  const { env } = setupFake("stop-block");
+  assert.equal(companion(["setup", "--enable-review-gate", "--json"], { cwd: repo, env }).status, 0);
+
+  for (let i = 0; i < 3; i += 1) {
+    assert.equal(stopHook(repo, env).decision, "block", `block ${i + 1}`);
+  }
+  const fourth = stopHook(repo, env);
+  assert.equal(fourth.decision, undefined);
+  assert.match(fourth.systemMessage, /blocked 3 times in a row in this session, so this stop goes through\. Last finding: .*Missing empty-state guard/);
+  assert.equal(stopHook(repo, env).decision, "block", "the count starts over");
+  assert.equal(stopHook(repo, env, "other-session").decision, "block", "sessions count separately");
+});
+
+test("stop hook reviews with the review gate's own model and effort", () => {
+  const repo = makeDirtyRepo();
+  const { binDir, env } = setupFake();
+
+  const configured = JSON.parse(companion(["setup", "--enable-review-gate", "--review-gate-model", "flash", "--review-gate-effort", "LOW", "--json"], { cwd: repo, env }).stdout);
+  assert.equal(configured.reviewGateModel, "flash");
+  assert.equal(configured.reviewGateEffort, "low");
+  assert.match(companion(["setup"], { cwd: repo, env }).stdout, /- review gate: enabled \(model flash, effort low\)/);
+
+  assert.deepEqual(stopHook(repo, env), {});
+  const invocation = lastInvocation(binDir);
+  assert.equal(flagValue(invocation.args, "--model"), "gemini-3.8-flash");
+  assert.equal(flagValue(invocation.args, "--effort"), "low");
+
+  const reset = JSON.parse(companion(["setup", "--review-gate-model", "default", "--review-gate-effort", "default", "--json"], { cwd: repo, env }).stdout);
+  assert.equal(reset.reviewGateModel, null);
+  assert.equal(reset.reviewGateEffort, null);
+  const invalid = companion(["setup", "--review-gate-effort", "extreme"], { cwd: repo, env });
+  assert.notEqual(invalid.status, 0);
+  assert.match(invalid.stderr, /Unsupported reasoning effort "extreme"/);
+});
+
+test("jobs whose process died are marked failed and do not block resuming", () => {
+  const repo = makeRepo();
+  const { binDir, env } = setupFake();
+  const deadPid = run("node", ["-e", "process.stdout.write(String(process.pid))"]).stdout.trim();
+  const job = { id: "task-dead", status: "running", phase: "running", jobClass: "task", kind: "task", title: "Gemini Task", pid: Number(deadPid), threadId: "conv-7", workspaceRoot: repo };
+  upsertJob(repo, job);
+  writeJobFile(repo, job.id, job);
+
+  const status = JSON.parse(companion(["status", "task-dead", "--json"], { cwd: repo, env }).stdout);
+  assert.equal(status.job.status, "failed");
+  assert.match(status.job.errorMessage, /exited without finishing/);
+
+  const resumed = companion(["task", "--resume-last", "keep going"], { cwd: repo, env });
+  assert.equal(resumed.status, 0, resumed.stderr);
+  assert.equal(flagValue(lastInvocation(binDir).args, "--conversation"), "conv-7");
+});
+
+test("failed runs keep the error as the job's summary and error message", async () => {
+  const repo = makeRepo();
+  const { env } = setupFake("partial-json-error");
+
+  const launched = JSON.parse(companion(["task", "--background", "--json", "answer in JSON"], { cwd: repo, env }).stdout);
+  const waited = JSON.parse(companion(["status", launched.jobId, "--wait", "--timeout-ms", "30000", "--json"], { cwd: repo, env }).stdout);
+
+  assert.equal(waited.job.status, "failed");
+  assert.match(waited.job.summary, /model is temporarily unavailable/);
+  assert.match(waited.job.errorMessage, /503 UNAVAILABLE/);
+});
+
+test("settings made in the main repository apply in its linked worktrees", () => {
+  const repo = makeRepo();
+  const { env } = setupFake();
+  const worktree = path.join(fs.realpathSync(makeTempDir()), "linked");
+  run("git", ["worktree", "add", "-q", worktree, "-b", "feature"], { cwd: repo });
+
+  assert.equal(companion(["setup", "--enable-review-gate", "--json"], { cwd: repo, env }).status, 0);
+  const fromWorktree = JSON.parse(companion(["setup", "--disable-web", "--json"], { cwd: worktree, env }).stdout);
+  assert.equal(fromWorktree.reviewGateEnabled, true);
+  assert.equal(JSON.parse(companion(["setup", "--json"], { cwd: repo, env }).stdout).web.enabled, false);
 });

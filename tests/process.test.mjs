@@ -53,3 +53,32 @@ test("terminateProcessTree treats missing Windows processes as already stopped",
   assert.equal(outcome.result.status, 128);
   assert.match(outcome.result.stdout, /not found/i);
 });
+
+test("terminateProcessTree signals the process itself when it leads no process group", () => {
+  const calls = [];
+  const outcome = terminateProcessTree(4321, {
+    platform: "darwin",
+    killImpl(pid, signal) {
+      calls.push([pid, signal]);
+      if (pid < 0) {
+        const error = new Error("no such process group");
+        error.code = "ESRCH";
+        throw error;
+      }
+    }
+  });
+  assert.deepEqual(calls, [[-4321, "SIGTERM"], [4321, "SIGTERM"]]);
+  assert.deepEqual(outcome, { attempted: true, delivered: true, method: "process" });
+});
+
+test("terminateProcessTree reports a process that is already gone", () => {
+  const outcome = terminateProcessTree(4321, {
+    platform: "linux",
+    killImpl() {
+      const error = new Error("no such process");
+      error.code = "ESRCH";
+      throw error;
+    }
+  });
+  assert.deepEqual(outcome, { attempted: true, delivered: false, method: "process-group" });
+});

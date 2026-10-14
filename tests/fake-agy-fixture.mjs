@@ -38,6 +38,7 @@ export const FAKE_MODELS = [
  * - "newer-version": reports agy 1.4.0, which the plugin has not verified.
  * - "sandbox-denied": runs `mkdir build`, which fails like agy's sandbox makes it fail.
  * - "web-fetch": fetches a URL with read_url_content.
+ * - "partial-json-error": starts a JSON answer, then fails the turn.
  */
 export function installFakeAgy(binDir, behavior = "ok") {
   const statePath = path.join(binDir, "fake-agy-state.json");
@@ -276,6 +277,11 @@ if (BEHAVIOR === "slow-task" || BEHAVIOR === "stubborn") {
 
 if (BEHAVIOR === "eligibility") {
   finish("ERROR", { error: "Eligibility check failed: Antigravity is not currently available in your location." });
+}
+
+if (BEHAVIOR === "partial-json-error") {
+  say("{\\"partial\\": ");
+  finish("ERROR", { error: "503 UNAVAILABLE: the model is overloaded" });
 }
 
 if (BEHAVIOR === "api-error") {

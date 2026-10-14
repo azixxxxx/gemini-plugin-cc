@@ -32,6 +32,7 @@ import { describeGuard } from "./lib/agy-guard.mjs";
 import { readStdinIfPiped } from "./lib/fs.mjs";
 import {
   collectReviewContext,
+  describeChangedPaths,
   describeRefChanges,
   describeWorkingTreeChanges,
   ensureGitRepository,
@@ -39,6 +40,7 @@ import {
   listChangedFiles,
   listRepositoryFiles,
   resolveReviewTarget,
+  snapshotChangedPaths,
   snapshotRefs,
   snapshotWorkingTree
 } from "./lib/git.mjs";
@@ -56,6 +58,7 @@ import {
   buildSingleJobSnapshot,
   buildStatusSnapshot,
   readStoredJob,
+  reconcileStaleJobs,
   resolveCancelableJob,
   resolveResultJob,
   sortJobsNewestFirst
@@ -91,7 +94,7 @@ function printUsage() {
   console.log(
     [
       "Usage:",
-      "  node scripts/gemini-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--enable-sandbox|--disable-sandbox] [--enable-web|--disable-web] [--json]",
+      "  node scripts/gemini-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--review-gate-model <model|default>] [--review-gate-effort <effort|default>] [--enable-sandbox|--disable-sandbox] [--enable-web|--disable-web] [--json]",
       "  node scripts/gemini-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [--model <model|pro|flash>] [--effort <low|medium|high|xhigh|max>]",
       "  node scripts/gemini-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [--model <model|pro|flash>] [--effort <level>] [focus text]",
       "  node scripts/gemini-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model|pro|flash>] [--effort <low|medium|high|xhigh|max>] [prompt]",
@@ -152,10 +155,15 @@ function buildReadOnlyTaskPrompt(workspaceRoot, prompt) {
   ].join("\n");
 }
 
-/** Runs a write-capable Gemini job and reports git history or remote refs that changed. */
+/**
+ * Runs a write-capable Gemini job, lists the files git sees changed during it (not the files
+ * Gemini says it changed), and reports git history or remote refs that changed.
+ */
 async function runWriteGuarded(cwd, run) {
   const before = snapshotRefs(cwd);
+  const pathsBefore = snapshotChangedPaths(cwd);
   const result = await run();
+  result.changedFiles = describeChangedPaths(pathsBefore, snapshotChangedPaths(cwd));
   const changes = describeRefChanges(before, snapshotRefs(cwd));
   if (changes) {
     const warnings = [...(result.warnings ?? [])];
@@ -312,6 +320,8 @@ async function buildSetupReport(cwd, actionsTaken = []) {
     guard,
     models,
     reviewGateEnabled: Boolean(config.stopReviewGate),
+    reviewGateModel: config.reviewGateModel ?? null,
+    reviewGateEffort: config.reviewGateEffort ?? null,
     warnings,
     actionsTaken,
     nextSteps
@@ -320,7 +330,7 @@ async function buildSetupReport(cwd, actionsTaken = []) {
 
 async function handleSetup(argv) {
   const { options } = parseCommandInput(argv, {
-    valueOptions: ["cwd"],
+    valueOptions: ["cwd", "review-gate-model", "review-gate-effort"],
     booleanOptions: ["json", "enable-review-gate", "disable-review-gate", "enable-sandbox", "disable-sandbox", "enable-web", "disable-web"]
   });
 
@@ -352,6 +362,19 @@ async function handleSetup(argv) {
   } else if (options["disable-sandbox"]) {
     setConfig(workspaceRoot, "sandbox", false);
     actionsTaken.push(`Disabled the Gemini sandbox for ${workspaceRoot}.`);
+  }
+
+  if (options["review-gate-model"] !== undefined) {
+    const model = String(options["review-gate-model"]).trim();
+    const value = !model || model === "default" ? null : model;
+    setConfig(workspaceRoot, "reviewGateModel", value);
+    actionsTaken.push(value ? `The review gate now uses --model ${value} in ${workspaceRoot}.` : `The review gate uses agy's default model in ${workspaceRoot}.`);
+  }
+  if (options["review-gate-effort"] !== undefined) {
+    const raw = String(options["review-gate-effort"]).trim();
+    const value = !raw || raw === "default" ? null : normalizeReasoningEffort(raw);
+    setConfig(workspaceRoot, "reviewGateEffort", value);
+    actionsTaken.push(value ? `The review gate now uses --effort ${value} in ${workspaceRoot}.` : `The review gate uses the model's default effort in ${workspaceRoot}.`);
   }
 
   if (options["enable-web"]) {
@@ -440,6 +463,7 @@ async function waitForSingleJobSnapshot(cwd, reference, options = {}) {
 
 function resolveLatestTrackedTaskSession(cwd, options = {}) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
+  reconcileStaleJobs(workspaceRoot);
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot)).filter((job) => job.id !== options.excludeJobId);
   const visibleJobs = filterJobsForCurrentClaudeSession(jobs);
   const activeTask = visibleJobs.find((job) => job.jobClass === "task" && isActiveJobStatus(job.status));
@@ -522,6 +546,7 @@ async function executeReviewRun(request) {
       failureMessage: result.status === 0 ? null : result.error?.message ?? null
     }),
     summary: parsed.parsed?.summary ?? result.error?.message ?? parsed.parseError ?? firstMeaningfulLine(result.finalMessage, `${reviewName} finished.`),
+    errorMessage: result.status === 0 ? null : result.error?.message ?? null,
     jobTitle: `Gemini ${reviewName}`,
     jobClass: "review",
     targetLabel: context.target.label
@@ -579,6 +604,7 @@ async function executeTaskRun(request) {
       jobId: request.jobId ?? null,
       write,
       warnings: result.warnings,
+      changedFiles: result.changedFiles,
       blockedToolCalls: result.blockedToolCalls,
       usage: result.usage
     }
@@ -590,6 +616,7 @@ async function executeTaskRun(request) {
     model: result.model,
     rawOutput,
     touchedFiles: result.touchedFiles,
+    changedFiles: result.changedFiles ?? [],
     deniedActions: result.deniedActions,
     blockedToolCalls: result.blockedToolCalls,
     usage: result.usage,
@@ -603,7 +630,12 @@ async function executeTaskRun(request) {
     sandboxed: result.sandboxed,
     payload,
     rendered,
-    summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
+    // A failed run's partial output can start with anything, such as "{"; the error says more.
+    summary:
+      result.status === 0
+        ? firstMeaningfulLine(rawOutput, `${taskMetadata.title} finished.`)
+        : firstMeaningfulLine(failureMessage, firstMeaningfulLine(rawOutput, `${taskMetadata.title} failed.`)),
+    errorMessage: result.status === 0 ? null : result.error?.message ?? null,
     jobTitle: taskMetadata.title,
     jobClass: "task",
     write: Boolean(request.write)
@@ -984,6 +1016,7 @@ function handleTaskResumeCandidate(argv) {
   });
 
   const workspaceRoot = resolveCommandWorkspace(options);
+  reconcileStaleJobs(workspaceRoot);
   const sessionId = getCurrentClaudeSessionId();
   const jobs = filterJobsForCurrentClaudeSession(sortJobsNewestFirst(listJobs(workspaceRoot)));
   const candidate = findLatestResumableTaskJob(jobs);

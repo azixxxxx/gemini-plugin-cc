@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.0
+
+Fixes for bugs inherited from OpenAI's codex-plugin-cc, several of them reported upstream, and safer defaults.
+
+- Jobs whose process died without finishing, for example after a restart, are marked as failed instead of staying "running" forever and blocking `--resume`.
+- The review gate no longer traps a session: when the review cannot run (expired sign-in, used-up quota, timeout), the stop goes through with a message, and after three blocks in a row in one session the next stop goes through too. The review now times out after 13 minutes, inside the hook's 15-minute limit, so a slow review ends with a message (upstream #766, #790).
+- `/gemini:setup --review-gate-model` and `--review-gate-effort` pick the model and effort for the review gate (upstream #769).
+- Settings (review gate, sandbox, web, gate model) apply to the whole repository, including its git worktrees, such as the ones Claude Code creates for desktop sessions (upstream #764).
+- Write runs list the files git saw change during the run (upstream #754).
+- Apostrophes in ordinary text, such as "the user's bug", no longer swallow the rest of the arguments, including flags after them. Backslashes outside quotes stay, so `\d+` or a Windows path survives.
+- `--key=value` keeps values that contain `=` (upstream #807).
+- Review context keeps the first column of `git status --short` (upstream #813), and files with non-ASCII names, such as `café.js`, are no longer skipped or shown escaped (upstream #812).
+- SessionStart no longer appends duplicate exports to `CLAUDE_ENV_FILE` on every resume and compaction, which made long sessions fail with E2BIG upstream (#783, #810).
+- `/gemini:cancel` also signals a process that leads no process group, such as a foreground job (upstream #786).
+- A failed job's summary and error are the error message, not the first line of partial output such as `{` (upstream #757).
+- The `gemini:gemini-rescue` subagent passes the task text on stdin through a heredoc instead of the command line, so quotes need no escaping and long prompts are not killed by endpoint security tools (upstream #777). It inherits the session's model instead of pinning Sonnet, which some organizations restrict (upstream #804).
+- Delegation that Claude starts on its own initiative runs read-only; write access needs `/gemini:rescue` or an explicit request to change files (upstream #798).
+
 ## 1.0.0
 
 First stable release. From this version on, the slash commands, their flags, and the companion's `--json` output fields follow semantic versioning.

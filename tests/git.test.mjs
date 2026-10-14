@@ -5,11 +5,13 @@ import assert from "node:assert/strict";
 
 import {
   collectReviewContext,
+  describeChangedPaths,
   describeRefChanges,
   formatFileListing,
   listChangedFiles,
   listRepositoryFiles,
   resolveReviewTarget,
+  snapshotChangedPaths,
   snapshotRefs
 } from "../plugins/gemini/scripts/lib/git.mjs";
 import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
@@ -369,4 +371,43 @@ test("listRepositoryFiles keeps the changed files' folders first when the list d
   assert.equal(listing.omitted, 3);
   assert.deepEqual(listRepositoryFiles(cwd, { maxBytes: 35 }).files, ["aaa/one.js", "aaa/three.js", "aaa/two.js"]);
   assert.deepEqual(listChangedFiles(makeTempDir()), []);
+});
+
+test("review context keeps the first status column and inlines files with non-ASCII names", () => {
+  const cwd = makeTempDir();
+  initGitRepo(cwd);
+  fs.writeFileSync(path.join(cwd, "a.js"), "one\n");
+  run("git", ["add", "a.js"], { cwd });
+  run("git", ["commit", "-m", "init"], { cwd });
+  fs.writeFileSync(path.join(cwd, "a.js"), "two\n");
+  fs.writeFileSync(path.join(cwd, "café.js"), "const café = 1;\n");
+
+  const context = collectReviewContext(cwd, { mode: "working-tree", label: "working tree diff" });
+
+  assert.match(context.content, /## Git Status\n\n M a\.js\n\?\? café\.js\n/);
+  assert.ok(context.changedFiles.includes("café.js"), JSON.stringify(context.changedFiles));
+  assert.match(context.content, /const café = 1;/);
+});
+
+test("describeChangedPaths lists new, edited, re-edited, renamed, and reverted files", () => {
+  const cwd = makeTempDir();
+  initGitRepo(cwd);
+  for (const name of ["keep.js", "edit.js", "again.js", "old-name.js", "revert.js"]) {
+    fs.writeFileSync(path.join(cwd, name), `${name}\n`);
+  }
+  run("git", ["add", "."], { cwd });
+  run("git", ["commit", "-m", "init"], { cwd });
+  fs.writeFileSync(path.join(cwd, "again.js"), "edited before the run\n");
+  fs.writeFileSync(path.join(cwd, "revert.js"), "edited before the run\n");
+
+  const before = snapshotChangedPaths(cwd);
+  fs.writeFileSync(path.join(cwd, "edit.js"), "edited during the run\n");
+  fs.writeFileSync(path.join(cwd, "again.js"), "edited again during the run, now longer\n");
+  fs.writeFileSync(path.join(cwd, "new.js"), "new\n");
+  run("git", ["mv", "old-name.js", "new-name.js"], { cwd });
+  run("git", ["checkout", "--", "revert.js"], { cwd });
+
+  assert.deepEqual(describeChangedPaths(before, snapshotChangedPaths(cwd)), ["again.js", "edit.js", "new-name.js", "new.js", "revert.js"]);
+  assert.deepEqual(describeChangedPaths(before, before), []);
+  assert.equal(snapshotChangedPaths(makeTempDir()), null);
 });

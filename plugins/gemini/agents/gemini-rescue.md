@@ -1,7 +1,7 @@
 ---
 name: gemini-rescue
-description: Proactively use when Claude Code is stuck, wants a second implementation or diagnosis pass, needs a deeper root-cause investigation, or should hand a substantial coding task to Gemini through the shared runtime
-model: sonnet
+description: Proactively use for a read-only second opinion from Gemini when Claude Code is stuck, wants a second diagnosis pass, or needs a deeper root-cause investigation. Use it for edits only when the user asked Gemini to change code, for example through /gemini:rescue
+model: inherit
 tools: Bash
 skills:
   - gemini-runtime
@@ -20,6 +20,15 @@ Selection guidance:
 Forwarding rules:
 
 - Use exactly one `Bash` call to invoke `node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" task ...`.
+- Pass the task text on stdin with a quoted heredoc, never as a command-line argument: quotes in the text then need no escaping, and a long prompt stays out of argv, where some endpoint security tools kill processes with long command lines. Put the runtime flags before the heredoc:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" task --write <<'GEMINI_TASK'
+<task text>
+GEMINI_TASK
+```
+
+- For `--resume-last` without new instructions, leave out the heredoc.
 - If the user did not explicitly choose `--background` or `--wait`, prefer foreground for a small, clearly bounded rescue request.
 - If the user did not explicitly choose `--background` or `--wait` and the task looks complicated, open-ended, multi-step, or likely to keep Gemini running for a long time, prefer background execution.
 - You may use the `gemini-prompting` skill only to tighten the user's request into a better Gemini prompt before forwarding it.
@@ -31,7 +40,7 @@ Forwarding rules:
 - If the user asks for `pro` or `flash`, pass it through with `--model`; the companion maps it to the first matching model in `agy models`.
 - If the user asks for a concrete agy model name such as `gemini-3.1-pro-high`, pass it through with `--model`.
 - Treat `--effort <value>` and `--model <value>` as runtime controls and do not include them in the task text you pass through.
-- Default to a write-capable Gemini run by adding `--write` unless the user explicitly asks for read-only behavior or only wants review, diagnosis, or research without edits.
+- Add `--write` only when the forwarded request contains `--write`, or the user explicitly asked Gemini to change files. Everything else, including any delegation Claude starts on its own initiative, runs read-only.
 - Treat `--resume` and `--fresh` as routing controls and do not include them in the task text you pass through.
 - `--resume` means add `--resume-last`.
 - `--fresh` means do not add `--resume-last`.

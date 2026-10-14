@@ -17,6 +17,7 @@ The plugin hands work to Gemini through Google's Antigravity CLI (`agy`). Gemini
 | A write-capable run commits or pushes | The guard denies shell commands that run `git commit` or `git push`. In agy's sandbox, the default on macOS and Linux, shell commands cannot write to `.git` at all. After the run, the plugin compares HEAD and all git refs with their state before the run and warns about commits, checkouts, and remote-tracking refs that changed. |
 | A write-capable run edits files outside the repository | The guard denies file edits outside the repository, the temp folders, and agy's notes for the conversation. In the sandbox, shell commands cannot write outside the temp folders. |
 | Work escapes the guard through subagents | The guard denies subagents. |
+| Claude Code hands Gemini write access on its own | Delegation that Claude starts without your request runs read-only; write access needs `/gemini:rescue` or an explicit request to change files. |
 | agy stops loading the guard after an update | A `PreInvocation` hook marks the guard as loaded before every model call. A run whose first tool call arrives without the mark is stopped. `/gemini:setup` reports whether the guard loaded. |
 | The guard script fails | The hook denies the tool call. |
 

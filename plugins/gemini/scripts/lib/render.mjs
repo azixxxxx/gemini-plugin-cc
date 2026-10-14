@@ -221,7 +221,25 @@ export function formatUsage(usage) {
   return `${number(usage.total_tokens)} tokens (${parts.join(", ")})`;
 }
 
+const MAX_CHANGED_FILE_LINES = 30;
+
+/** Lists the files git saw change during a write run. */
+export function formatChangedFiles(changedFiles) {
+  if (!Array.isArray(changedFiles) || changedFiles.length === 0) {
+    return [];
+  }
+  const lines = changedFiles.slice(0, MAX_CHANGED_FILE_LINES).map((file) => `- ${file}`);
+  if (changedFiles.length > MAX_CHANGED_FILE_LINES) {
+    lines.push(`- ...and ${changedFiles.length - MAX_CHANGED_FILE_LINES} more`);
+  }
+  return ["Changed in the working tree during this run (from git):", ...lines];
+}
+
 function appendRunDetails(lines, meta = {}) {
+  const changed = formatChangedFiles(meta.changedFiles);
+  if (changed.length > 0) {
+    lines.push("", ...changed);
+  }
   const blocked = formatBlockedToolCalls(meta.blockedToolCalls);
   if (blocked.length > 0) {
     lines.push("", ...blocked);
@@ -230,6 +248,17 @@ function appendRunDetails(lines, meta = {}) {
   if (usage) {
     lines.push("", `Usage: ${usage}`);
   }
+}
+
+function describeReviewGate(report) {
+  if (!report.reviewGateEnabled) {
+    return "disabled";
+  }
+  const settings = [
+    ...(report.reviewGateModel ? [`model ${report.reviewGateModel}`] : []),
+    ...(report.reviewGateEffort ? [`effort ${report.reviewGateEffort}`] : [])
+  ];
+  return settings.length > 0 ? `enabled (${settings.join(", ")})` : "enabled";
 }
 
 function describeGuardStatus(guard) {
@@ -256,7 +285,7 @@ export function renderSetupReport(report) {
     ...(report.web ? [`- web: ${report.web.label}`] : []),
     ...(report.guard ? [`- tool guard: ${describeGuardStatus(report.guard)}`] : []),
     ...(report.models?.length > 0 ? [`- models: ${report.models.join(", ")}`] : []),
-    `- review gate: ${report.reviewGateEnabled ? "enabled" : "disabled"}`,
+    `- review gate: ${describeReviewGate(report)}`,
     ""
   ];
 
