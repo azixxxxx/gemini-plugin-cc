@@ -1,8 +1,10 @@
 # Gemini plugin for Claude Code
 
-Use the Gemini CLI from inside Claude Code for code reviews or to delegate tasks to Gemini.
+Use Gemini from inside Claude Code for code reviews or to delegate tasks to Gemini. The plugin drives Google's Antigravity CLI (`agy`), which ships with the Gemini desktop app.
 
-This is a fork of [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc) v1.0.6. It keeps the commands, the background job model, and the review gate of the Codex plugin, and replaces the Codex app-server runtime with a headless Gemini CLI runtime.
+This is a fork of [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc) v1.0.6. It keeps the commands, the background job model, and the review gate of the Codex plugin, and replaces the Codex app-server runtime with headless `agy` runs.
+
+Version 0.1.0 drove Gemini CLI. Gemini CLI stopped accepting personal Google accounts in June 2026 (sign-in fails with `IneligibleTierError`), so 0.2.0 switched to `agy`, which still accepts them.
 
 ## What You Get
 
@@ -13,10 +15,10 @@ This is a fork of [openai/codex-plugin-cc](https://github.com/openai/codex-plugi
 
 ## Requirements
 
-- **Gemini CLI with `--admin-policy` support.** Tested with Gemini CLI 0.64.0. Install or update it with `npm install -g @google/gemini-cli@latest`.
-- **A Gemini CLI sign-in:** Sign in with Google, a Gemini API key (`GEMINI_API_KEY`), or Vertex AI. Usage counts against the quota of that account.
+- **The Antigravity CLI `agy`.** Google's Gemini desktop app bundles it, on macOS at `/Applications/Gemini.app/Contents/Helpers/agy`. The plugin finds `agy` on your `PATH`, in the app bundle, or at the path in `GEMINI_COMPANION_AGY_PATH`. Run `agy install` once if you want `agy` on your `PATH`. Tested with agy 1.3.5.
+- **An agy sign-in** with a Google account that can use Antigravity. Usage counts against the quota of that account.
 - **Node.js 18.18 or later**
-- macOS is the tested platform. Linux should work, with the Gemini sandbox off by default. Windows is untested.
+- macOS is the tested platform. Linux should work. Windows is untested, and the plugin's tool guard is off there.
 
 ## Install
 
@@ -46,9 +48,9 @@ Then run:
 /gemini:setup
 ```
 
-`/gemini:setup` checks Node.js, the Gemini CLI version, and whether Gemini can sign in, by sending one tiny read-only prompt. If Gemini CLI is missing or too old and npm is available, it offers to install the latest version.
+`/gemini:setup` checks Node.js, the agy version and the flags the plugin needs, and whether Gemini answers, by sending one tiny read-only prompt.
 
-If Gemini CLI is installed but not signed in, open a terminal, run `gemini`, choose **Sign in with Google**, finish the browser flow, and quit with `/quit`. Signing in needs an interactive terminal, so do it outside Claude Code. To use an API key instead, export `GEMINI_API_KEY` before you start Claude Code.
+If agy is installed but not signed in, open a terminal, run `agy`, type `/login`, finish the sign-in in the browser, and quit with Ctrl+C twice. Signing in needs an interactive terminal, so do it outside Claude Code. If Antigravity rejects the account or its location, sign in with another account or from a location where Antigravity is available.
 
 After install, you should see:
 
@@ -74,7 +76,7 @@ Use it when you want:
 - a review of your current uncommitted changes
 - a review of your branch compared to a base branch like `main`
 
-Use `--base <ref>` for branch review and `--model <model>` to pick a Gemini model. It also supports `--wait` and `--background`. It is not steerable and does not take custom focus text. Use [`/gemini:adversarial-review`](#geminiadversarial-review) when you want to challenge a specific decision or risk area.
+Use `--base <ref>` for branch review, `--model` to pick a model, and `--effort` to set the reasoning effort. It also supports `--wait` and `--background`. It is not steerable and does not take custom focus text. Use [`/gemini:adversarial-review`](#geminiadversarial-review) when you want to challenge a specific decision or risk area.
 
 Examples:
 
@@ -82,7 +84,7 @@ Examples:
 /gemini:review
 /gemini:review --base main
 /gemini:review --background
-/gemini:review --model pro
+/gemini:review --model flash --effort high
 ```
 
 This command is read-only. When run in the background you can use [`/gemini:status`](#geministatus) to check on the progress and [`/gemini:cancel`](#geminicancel) to cancel it.
@@ -93,7 +95,7 @@ Runs a **steerable** review that questions the chosen implementation and design.
 
 It can be used to pressure-test assumptions, tradeoffs, failure modes, and whether a different approach would have been safer or simpler.
 
-It uses the same review target selection as `/gemini:review`, including `--base <ref>` for branch review. It also supports `--wait`, `--background`, and `--model`. Unlike `/gemini:review`, it takes extra focus text after the flags.
+It uses the same review target selection as `/gemini:review`, including `--base <ref>` for branch review. It also supports `--wait`, `--background`, `--model`, and `--effort`. Unlike `/gemini:review`, it takes extra focus text after the flags.
 
 Examples:
 
@@ -114,11 +116,11 @@ Use it when you want Gemini to:
 - investigate a bug
 - try a fix
 - continue a previous Gemini task
-- take a faster or cheaper pass with a Flash model
+- take a second pass with a different model
 
-Rescue runs are write-capable by default. Gemini edits files in your working tree and never commits or pushes; Claude Code and you review the result.
+Rescue runs are write-capable by default. Gemini edits files in your working tree and does not commit or push; Claude Code and you review the result.
 
-It supports `--background`, `--wait`, `--resume`, `--fresh`, and `--model`. If you omit `--resume` and `--fresh`, the plugin can offer to continue the latest rescue session for this repository.
+It supports `--background`, `--wait`, `--resume`, `--fresh`, `--model`, and `--effort`. If you omit `--resume` and `--fresh`, the plugin can offer to continue the latest rescue conversation for this repository.
 
 Examples:
 
@@ -126,7 +128,7 @@ Examples:
 /gemini:rescue investigate why the tests started failing
 /gemini:rescue fix the failing test with the smallest safe patch
 /gemini:rescue --resume apply the top fix from the last run
-/gemini:rescue --model flash investigate the flaky integration test
+/gemini:rescue --model flash --effort low investigate the flaky integration test
 /gemini:rescue --background investigate the regression
 ```
 
@@ -138,9 +140,9 @@ Ask Gemini to redesign the database connection to be more resilient.
 
 **Notes:**
 
-- If you do not pass `--model`, Gemini CLI picks its default (`auto` routing). The aliases `auto`, `pro`, `flash`, and `flash-lite` are resolved by Gemini CLI.
-- Gemini CLI has no reasoning-effort flag, so there is no `--effort`. Ask for `--model pro` when you want more capability.
-- Follow-up rescue requests can continue the latest Gemini session in the repository.
+- If you do not pass `--model`, agy uses its default model. `--model flash` and `--model pro` pick the first Flash or Pro model in the order `agy models` lists them for your account; any other name goes to agy unchanged. Your account may not offer a Pro model at all.
+- `--effort` accepts `low`, `medium`, `high`, `xhigh`, and `max`, but each model supports only some of them: Gemini 3.8 Flash accepts `low`, `medium`, and `high`. A model name that already ends in an effort, such as `gemini-3.8-flash-low`, cannot be combined with `--effort`.
+- Follow-up rescue requests can continue the latest Gemini conversation in the repository.
 
 ### `/gemini:status`
 
@@ -155,7 +157,7 @@ Examples:
 
 ### `/gemini:result`
 
-Shows the final stored Gemini output for a finished job, with the Gemini session ID and a `gemini --resume <session-id>` command. Run that command from the repository root to continue the session directly in Gemini CLI.
+Shows the final stored Gemini output for a finished job, with the agy conversation ID and an `agy --conversation <id>` command. Run that command from the repository root to continue the conversation directly in agy.
 
 Examples:
 
@@ -166,7 +168,7 @@ Examples:
 
 ### `/gemini:cancel`
 
-Cancels an active background Gemini job and stops its Gemini process group.
+Cancels an active background Gemini job and stops its agy process group.
 
 Examples:
 
@@ -177,7 +179,7 @@ Examples:
 
 ### `/gemini:setup`
 
-Checks whether Gemini CLI is installed, current, and signed in. If Gemini CLI is missing or too old and npm is available, it can offer to install it for you.
+Checks whether agy is installed, recent enough, and signed in, and reports the sandbox, the tool guard, and the review gate.
 
 It also manages two per-repository switches:
 
@@ -223,59 +225,75 @@ Then check in with:
 
 ## How Gemini Runs
 
-Every job is one headless Gemini CLI process: `gemini --output-format stream-json`. The prompt goes to stdin, and the plugin parses the JSONL event stream for progress, the session ID, tool calls, and the final answer. `NO_BROWSER=true` is set so that an expired login fails immediately instead of waiting for a browser.
+Every job is one headless agy process: `agy --input-format stream-json --output-format stream-json`. The prompt goes to stdin as a stream-json message, and the plugin parses the event stream for progress, the conversation ID, tool calls, and the final answer. Reviews pass the plugin's review schema with `--json-schema`, so agy returns the review as structured output.
 
-Gemini runs in its own process group led by a small runner, [`scripts/gemini-runner.mjs`](plugins/gemini/scripts/gemini-runner.mjs). `/gemini:cancel` stops the whole group and escalates to `SIGKILL` if Gemini ignores `SIGTERM`. The runner also stops Gemini on its own when the job that started it dies, for example when Claude Code kills a Bash task, so a write-capable run never keeps editing unsupervised.
+agy runs in its own process group led by a small runner, [`scripts/agy-runner.mjs`](plugins/gemini/scripts/agy-runner.mjs). `/gemini:cancel` stops the whole group and escalates to `SIGKILL` if agy ignores `SIGTERM`. The runner also stops agy on its own when the job that started it dies, for example when Claude Code kills a Bash task, so a write-capable run never keeps editing unsupervised.
+
+### Tool guard
+
+agy has no per-run permission policy, but it runs `PreToolUse` hooks from a `.agents/hooks.json` in each workspace folder, before its own permission checks. For every run the plugin writes such a file into a temporary folder, passes that folder to agy with `--add-dir`, and removes it when the run ends. The hook calls [`scripts/agy-guard-hook.mjs`](plugins/gemini/scripts/agy-guard-hook.mjs), which denies a tool call with a reason or leaves it to agy. Gemini sees the reason and continues.
+
+- **Read-only runs** may only view files inside the repository. Everything else is denied: file edits, shell commands, web and browser tools, MCP tools, subagents, and reading outside the repository.
+- **Write-capable runs** may not run `git commit` or `git push`, edit files outside the repository and the temp folders, edit `.git`, or start subagents, which report back only after a headless run has ended.
+
+The guard also covers subagents' tool calls, and it lets agy read and write its own notes for the current conversation under `~/.gemini/antigravity-cli/brain`.
+
+The commit and push check parses the command line, including commands wrapped in `sh -c`, but not git aliases or scripts, so it is a guardrail, not a security boundary. If the guard script fails, the hook denies the call.
+
+agy sorts workspace folders by path and treats the first one as the current folder. The guard folder therefore goes into the system temp folder when its path sorts after the repository, otherwise into the repository's `.git` folder. If the companion is killed, the runner removes the guard folder; a folder left behind anyway, for example after a crash, is removed by a later run after a day. On Windows the guard is off.
 
 ### Read-only runs
 
-Reviews, the stop-gate review, and rescue runs without `--write` start Gemini with `--approval-mode default` and [`policies/read-only.toml`](plugins/gemini/policies/read-only.toml) loaded through `--admin-policy`. That policy denies `write_file`, `replace`, `run_shell_command`, `save_memory`, `web_fetch`, plan-mode switches, and all MCP tools. Gemini can still read files and search.
+Reviews, the stop-gate review, and rescue runs without `--write` start agy without `--dangerously-skip-permissions`. Headless agy then refuses file edits and shell commands by itself, but it ends the run without an answer when Gemini tries one, and it allows web tools. The tool guard turns those attempts into denials Gemini can recover from and blocks the web.
 
-The admin tier matters: approvals you saved with "Allow for all future sessions" live in `~/.gemini/policies` at the user tier, and without an admin rule they would still let a headless run edit files or run commands.
+agy gives the model no tool to list folders or search file contents; it does that with shell commands. Read-only Gemini can therefore only open files it knows about, so the plugin puts the repository's file list (tracked and untracked files that git does not ignore, up to 32 KB) into every read-only prompt. Without it, Gemini guesses file names: in one test the same read-only task took 384 seconds without the list and 35 seconds with it.
 
-If your machine has system admin policies (`/Library/Application Support/GeminiCli/policies` on macOS), Gemini ignores `--admin-policy`, and those system policies decide what read-only runs may do. `/gemini:setup` warns about this.
+Because read-only Gemini cannot run git, the plugin also puts the diff and the content of untracked files into review prompts. They share a budget of 1 MB. A diff over budget is cut at a file boundary, and the omitted files are listed so Gemini can read them with `view_file`. External diff drivers and `textconv` filters are disabled while the plugin collects the diff.
 
-Because read-only Gemini cannot run git, the plugin puts the diff and the content of untracked files into the prompt. They share a budget of 1 MB, or 512 KB when the Gemini sandbox is on: a sandboxed Gemini passes the prompt on its own command line, which macOS limits to 1 MB including the environment. A diff over budget is cut at a file boundary, and the omitted files are listed so Gemini can read them with `read_file`. External diff drivers and `textconv` filters are disabled while the plugin collects the diff.
+The plugin also compares the git state before and after a read-only run and warns when files changed while it ran.
 
 ### Write-capable runs
 
-Rescue runs with `--write` (the default for `/gemini:rescue`) use `--approval-mode yolo`, so Gemini can edit files and run commands without prompts. [`policies/write-guard.toml`](plugins/gemini/policies/write-guard.toml) blocks commands that start with `git commit` or `git push`. Prefix rules are a guardrail, not a security boundary.
+Rescue runs with `--write` (the default for `/gemini:rescue`) pass `--dangerously-skip-permissions`, so Gemini can edit files and run commands without prompts. The tool guard applies, and the prompt tells Gemini to leave its changes uncommitted.
 
 ### Sandbox
 
-On macOS every plugin run uses Gemini's seatbelt sandbox (`--sandbox`, profile `permissive-open`). Writes are confined to the repository, temporary, and cache directories, and Gemini's credential files are unreadable inside the sandbox. Network access stays on. Turn it off for a repository with `/gemini:setup --disable-sandbox`, for example when a task must write outside the repository.
+On macOS and Linux, write-capable runs also pass `--sandbox`, which turns on agy's terminal sandbox for the shell commands Gemini runs. With agy 1.3.5 on macOS, sandboxed commands:
 
-On other platforms the sandbox is off by default, because it needs Docker or Podman. `/gemini:setup --enable-sandbox` turns it on.
+- cannot write anywhere in the repository, including `.git`, so `git commit` fails even without the guard;
+- can write to temp folders;
+- cannot read your home folder, for example `~/.zshrc` or `~/Library/Application Support`;
+- keep network access.
 
-Gemini stores sandboxed sessions under `~/.cache/.gemini` and other sessions under `~/.gemini`. A resumed rescue run therefore always uses the sandbox mode of the run that created the session.
+Gemini's own file tools are not sandboxed; the tool guard limits where they write. Builds, installs, and tests that write into the repository fail inside the sandbox. Turn it off for a repository with `/gemini:setup --disable-sandbox`; commands then run with your user's permissions, and the guard's commit and push check is their only limit.
 
-A sandboxed run refuses prompts larger than 768 KB with an explicit error instead of failing inside Gemini. Narrow the request or disable the sandbox for that repository.
+Read-only runs do not pass `--sandbox`, because they cannot run commands.
 
 ## Differences From The Codex Plugin
 
-- There is no `/gemini:transfer`: Gemini CLI cannot import Claude Code sessions.
-- There is no `--effort`: Gemini CLI has no reasoning-effort flag. Use `--model`.
-- `/gemini:review` uses the plugin's own review prompt, because Gemini CLI has no built-in reviewer. Both reviews return the same JSON review schema as the Codex plugin.
-- There is no shared app-server or broker. Each job starts its own Gemini process.
-- `/gemini:setup` verifies the sign-in with one tiny prompt, because cached Google credentials can expire without any local sign of it.
+- There is no `/gemini:transfer`.
+- `/gemini:review` uses the plugin's own review prompt with agy's `--json-schema`, because agy has no built-in reviewer. Both reviews return the same JSON review schema as the Codex plugin.
+- There is no shared app-server or broker. Each job starts its own agy process.
+- Read-only and write limits come from the plugin's tool guard and agy's sandbox instead of Codex's sandbox policies.
+- `/gemini:setup` verifies the sign-in with one tiny prompt, because a cached sign-in can expire or be rejected for the account's location without any local sign of it.
 
 ## FAQ
 
 ### Do I need a separate account for this plugin?
 
-No. The plugin uses the Gemini CLI login on this machine. If `gemini` works in your terminal, the plugin works too.
+No. The plugin uses the agy sign-in on this machine. If `agy` works in your terminal, the plugin works too.
 
-### Will it use my Gemini CLI configuration?
+### Will it use my agy configuration?
 
-Yes. Your `~/.gemini/settings.json` applies, including the default model, hooks, extensions, and MCP servers. Read-only runs disable MCP tools through the admin policy.
+Yes. `~/.gemini/antigravity-cli/settings.json` applies, including permission rules and the default model, and so do your agy plugins, MCP servers, rules, and hooks. Your allow rules cannot widen read-only runs, because the guard's hook runs before agy's permission checks.
 
-### Why do I see "Reply with exactly the word OK" sessions in Gemini?
+### Why do I see "Reply with exactly the word OK" conversations in agy?
 
-That is the sign-in check from `/gemini:setup`. The plugin does not delete it: `gemini --delete-session` falls back to treating an unknown ID as a list index and could delete a different session. Gemini removes old sessions after its retention period, 30 days by default.
+That is the sign-in check from `/gemini:setup`. Each check is one short conversation in agy's history.
 
 ### Can I continue a Gemini job outside Claude Code?
 
-Yes. `/gemini:result` prints the session ID and a `gemini --resume <session-id>` command, with `--sandbox` when the job ran sandboxed. Run it from the repository root, because Gemini stores sessions per project.
+Yes. `/gemini:result` prints the conversation ID and an `agy --conversation <id>` command. Run it from the repository root.
 
 ## Development
 
@@ -285,7 +303,7 @@ npm test
 npm run build
 ```
 
-`npm test` uses a fake `gemini` executable and makes no network calls. `npm run build` type-checks the runtime scripts.
+`npm test` uses a fake `agy` executable that speaks agy's stream-json protocol and runs the guard's hooks, and makes no network calls. `npm run build` type-checks the runtime scripts.
 
 ## License
 

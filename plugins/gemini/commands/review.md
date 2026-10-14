@@ -1,12 +1,12 @@
 ---
 description: Run a Gemini code review against local git state
-argument-hint: '[--wait|--background] [--base <ref>] [--scope auto|working-tree|branch] [--model <model>]'
+argument-hint: '[--wait|--background] [--base <ref>] [--scope auto|working-tree|branch] [--model <agy-model|pro|flash>] [--effort <low|medium|high|xhigh|max>]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
 ---
 
 Run a Gemini review through the plugin's standard review prompt.
-Gemini runs read-only: the plugin's admin policy disables edits and shell commands for the run.
+Gemini runs read-only: the plugin starts agy without `--dangerously-skip-permissions`, so headless agy denies file edits and shell commands for the run.
 
 Raw slash-command arguments:
 `$ARGUMENTS`

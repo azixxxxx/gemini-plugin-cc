@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -9,6 +10,8 @@ const MAX_UNTRACKED_BYTES = 64 * 1024;
 // diff. Above this budget the diff is cut at a file boundary and omitted files are listed.
 const DEFAULT_INLINE_DIFF_MAX_BYTES = 1024 * 1024;
 const DIFF_ARGS = ["--no-ext-diff", "--no-textconv", "--submodule=diff"];
+// agy's model can view files but cannot list folders or search, so read-only runs get a file list.
+const REPOSITORY_FILE_LIST_MAX_BYTES = 32 * 1024;
 
 // Git is directly executable on Windows. Repository-derived arguments must never pass through a shell.
 function git(cwd, args, options = {}) {
@@ -235,7 +238,7 @@ function formatUntrackedFile(cwd, relativePath) {
     return `### ${relativePath}\n(skipped: directory)`;
   }
   if (stat.size > MAX_UNTRACKED_BYTES) {
-    return `### ${relativePath}\n(skipped: ${stat.size} bytes exceeds ${MAX_UNTRACKED_BYTES} byte limit; read it with read_file if needed)`;
+    return `### ${relativePath}\n(skipped: ${stat.size} bytes exceeds ${MAX_UNTRACKED_BYTES} byte limit; read it with view_file if needed)`;
   }
 
   let buffer;
@@ -261,13 +264,45 @@ function formatUntrackedFilesWithinBudget(cwd, files, budgetBytes) {
     const size = Buffer.byteLength(block, "utf8");
     if (size > remaining) {
       omittedFiles.push(file);
-      blocks.push(`### ${file}\n(omitted: review budget exhausted; read it with read_file)`);
+      blocks.push(`### ${file}\n(omitted: review budget exhausted; read it with view_file)`);
       continue;
     }
     blocks.push(block);
     remaining -= size;
   }
   return { body: blocks.join("\n\n"), omittedFiles };
+}
+
+/**
+ * Lists tracked and untracked, non-ignored files, sorted, within a byte budget. Returns null
+ * outside a git repository.
+ */
+export function listRepositoryFiles(cwd, options = {}) {
+  const maxBytes = options.maxBytes ?? REPOSITORY_FILE_LIST_MAX_BYTES;
+  const result = git(cwd, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 64 * 1024 * 1024 });
+  if (result.error || result.status !== 0) {
+    return null;
+  }
+  const files = [...new Set(String(result.stdout).split("\0").filter(Boolean))].sort();
+  const kept = [];
+  let used = 0;
+  for (const file of files) {
+    const size = Buffer.byteLength(file, "utf8") + 1;
+    if (used + size > maxBytes) {
+      break;
+    }
+    kept.push(file);
+    used += size;
+  }
+  return { files: kept, total: files.length, omitted: files.length - kept.length };
+}
+
+/** Formats a file listing as plain lines, noting how many files did not fit. */
+export function formatFileListing(listing) {
+  if (!listing || listing.total === 0) {
+    return "";
+  }
+  return `${listing.files.join("\n")}${listing.omitted > 0 ? `\n(${listing.omitted} more files not listed)` : ""}`;
 }
 
 function formatOmittedFiles(omittedFiles) {
@@ -337,11 +372,11 @@ function collectBranchContext(cwd, baseRef, budgetBytes, comparison = buildBranc
 
 function buildCollectionGuidance(details) {
   const base =
-    "This is a read-only run: shell commands and file edits are disabled. Use read_file, grep_search, and glob to inspect surrounding code.";
+    'This is a read-only run: you can read files inside the repository with view_file, but you cannot list folders, search file contents, run shell commands, edit files, or use the web. "Repository Files" in the repository context lists the files that exist.';
   if (!details.truncated) {
     return `Use the repository context as primary evidence. ${base}`;
   }
-  return `The diff in the repository context was truncated to fit the review budget. Files listed under "Files Without Inline Diff" changed but their diffs are omitted; read their current contents with read_file before drawing conclusions about them. ${base}`;
+  return `The diff in the repository context was truncated to fit the review budget. Files listed under "Files Without Inline Diff" changed but their diffs are omitted; read their current contents with view_file before drawing conclusions about them. ${base}`;
 }
 
 export function collectReviewContext(cwd, target, options = {}) {
@@ -352,6 +387,10 @@ export function collectReviewContext(cwd, target, options = {}) {
     target.mode === "working-tree"
       ? collectWorkingTreeContext(repoRoot, getWorkingTreeState(repoRoot), budgetBytes)
       : collectBranchContext(repoRoot, target.baseRef, budgetBytes);
+  const fileListing = formatFileListing(listRepositoryFiles(repoRoot));
+  if (fileListing) {
+    details.content = [details.content, formatSection("Repository Files", fileListing)].filter(Boolean).join("\n");
+  }
 
   return {
     cwd: repoRoot,
@@ -362,5 +401,69 @@ export function collectReviewContext(cwd, target, options = {}) {
     inputMode: details.truncated ? "truncated-diff" : "inline-diff",
     collectionGuidance: buildCollectionGuidance(details),
     ...details
+  };
+}
+
+const SNAPSHOT_MAX_BYTES = 64 * 1024 * 1024;
+
+function hashText(hash, text) {
+  hash.update(String(text ?? ""));
+  hash.update("\u0000");
+}
+
+/**
+ * Captures enough of the working tree to tell whether a read-only run changed anything:
+ * HEAD, status, staged and unstaged diffs, and the size and mtime of untracked files.
+ * Returns null outside a Git repository or when the diff is too large to hash.
+ */
+export function snapshotWorkingTree(cwd) {
+  const top = git(cwd, ["rev-parse", "--show-toplevel"]);
+  if (top.error || top.status !== 0) {
+    return null;
+  }
+  const root = top.stdout.trim();
+  const status = git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], { maxBuffer: SNAPSHOT_MAX_BYTES });
+  const unstaged = git(root, ["diff", ...DIFF_ARGS, "--binary"], { maxBuffer: SNAPSHOT_MAX_BYTES });
+  const staged = git(root, ["diff", "--cached", ...DIFF_ARGS, "--binary"], { maxBuffer: SNAPSHOT_MAX_BYTES });
+  if ([status, unstaged, staged].some((result) => result.error)) {
+    return null;
+  }
+  const head = git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]).stdout.trim();
+  const entries = status.stdout.split("\u0000").filter(Boolean);
+  const hash = createHash("sha256");
+  hashText(hash, head);
+  hashText(hash, status.stdout);
+  hashText(hash, unstaged.stdout);
+  hashText(hash, staged.stdout);
+  for (const entry of entries) {
+    if (!entry.startsWith("?? ")) {
+      continue;
+    }
+    try {
+      const stat = fs.statSync(path.join(root, entry.slice(3)));
+      hashText(hash, `${entry}:${stat.size}:${stat.mtimeMs}`);
+    } catch {
+      hashText(hash, `${entry}:missing`);
+    }
+  }
+  return { root, head, entries, digest: hash.digest("hex") };
+}
+
+/** Lists paths whose status changed between two snapshots, or null when nothing changed. */
+export function describeWorkingTreeChanges(before, after) {
+  if (!before || !after || before.digest === after.digest) {
+    return null;
+  }
+  const beforeSet = new Set(before.entries);
+  const afterSet = new Set(after.entries);
+  const changed = new Set();
+  for (const entry of [...before.entries, ...after.entries]) {
+    if (!beforeSet.has(entry) || !afterSet.has(entry)) {
+      changed.add(entry.slice(3));
+    }
+  }
+  return {
+    headMoved: before.head !== after.head,
+    paths: changed.size > 0 ? [...changed].sort() : ["(contents of already-modified files)"]
   };
 }

@@ -1,17 +1,32 @@
 #!/usr/bin/env node
 
-// Starts `gemini` inside this process's group and tears the whole group down when the
-// companion that launched it disappears. Gemini runs detached so that /gemini:cancel can
-// signal its process group, which would otherwise leave Gemini running unsupervised
+// Usage: node agy-runner.mjs <agy-binary> [agy args...]
+//
+// Starts agy inside this process's group and tears the whole group down when the
+// companion that launched it disappears. agy runs detached so that /gemini:cancel can
+// signal its process group, which would otherwise leave agy running unsupervised
 // after a SIGKILL of the companion, for example when Claude Code stops a Bash task.
+// When the companion dies it also removes the run's guard folder, which the companion
+// would otherwise clean up after reading the guard's denial log.
 
 import { spawn } from "node:child_process";
 import process from "node:process";
+
+import { GUARD_DIR_ENV, removeGuardDirectory } from "./lib/agy-guard.mjs";
 
 const WATCHDOG_INTERVAL_MS = 500;
 const KILL_GRACE_MS = 2000;
 const isWindows = process.platform === "win32";
 const launcherPid = process.ppid;
+const guardDir = process.env[GUARD_DIR_ENV] ?? null;
+
+function removeGuard() {
+  try {
+    removeGuardDirectory(guardDir);
+  } catch {
+    // Best effort; stale guard folders are removed by later runs.
+  }
+}
 
 function signalGroup(signal) {
   try {
@@ -40,20 +55,25 @@ function shutdown(exitCode) {
   }, KILL_GRACE_MS).unref();
 }
 
+const [binary, ...agyArgs] = process.argv.slice(2);
+if (!binary) {
+  process.stderr.write("Usage: node agy-runner.mjs <agy-binary> [args...]\n");
+  process.exit(2);
+}
+
 let child = null;
 try {
-  child = spawn("gemini", process.argv.slice(2), {
+  child = spawn(binary, agyArgs, {
     stdio: "inherit",
-    shell: isWindows ? process.env.SHELL || true : false,
     windowsHide: true
   });
 } catch (error) {
-  process.stderr.write(`Failed to start gemini: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.stderr.write(`Failed to start agy: ${error instanceof Error ? error.message : String(error)}\n`);
   process.exit(127);
 }
 
 child.once("error", (error) => {
-  process.stderr.write(`Failed to start gemini: ${error.message}\n`);
+  process.stderr.write(`Failed to start agy: ${error.message}\n`);
   process.exit(127);
 });
 
@@ -67,7 +87,8 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
 
 setInterval(() => {
   if (process.ppid !== launcherPid) {
-    process.stderr.write("The Gemini companion exited; stopping Gemini.\n");
+    process.stderr.write("The Gemini companion exited; stopping agy.\n");
+    removeGuard();
     shutdown(128 + 9);
   }
 }, WATCHDOG_INTERVAL_MS).unref();

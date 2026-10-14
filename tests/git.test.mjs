@@ -3,7 +3,7 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { collectReviewContext, resolveReviewTarget } from "../plugins/gemini/scripts/lib/git.mjs";
+import { collectReviewContext, formatFileListing, listRepositoryFiles, resolveReviewTarget } from "../plugins/gemini/scripts/lib/git.mjs";
 import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
 
 test("resolveReviewTarget prefers working tree when repo is dirty", () => {
@@ -194,7 +194,7 @@ test("collectReviewContext cuts oversized diffs at a file boundary and lists omi
   assert.match(context.content, /## Files Without Inline Diff\n\nb\.js/);
   assert.deepEqual(context.omittedFiles, ["b.js"]);
   assert.match(context.collectionGuidance, /truncated/i);
-  assert.match(context.collectionGuidance, /read_file/);
+  assert.match(context.collectionGuidance, /view_file/);
 });
 
 test("collectReviewContext truncates branch diffs within the budget", () => {
@@ -231,7 +231,7 @@ test("collectReviewContext lists untracked files it could not inline once the bu
   assert.equal(context.fileCount, 2);
   assert.match(context.content, /## Untracked Files/);
   assert.doesNotMatch(context.content, /UNTRACKED_RISK_MARKER/);
-  assert.match(context.content, /### new-risk\.js\n\(omitted: review budget exhausted; read it with read_file\)/);
+  assert.match(context.content, /### new-risk\.js\n\(omitted: review budget exhausted; read it with view_file\)/);
   assert.ok(context.omittedFiles.includes("new-risk.js"));
 });
 
@@ -268,6 +268,54 @@ test("collectReviewContext counts untracked files against the same budget", () =
   assert.equal(context.truncated, true);
   assert.match(context.content, /ffff/);
   assert.doesNotMatch(context.content, /ssss/);
-  assert.match(context.content, /### second\.js\n\(omitted: review budget exhausted; read it with read_file\)/);
+  assert.match(context.content, /### second\.js\n\(omitted: review budget exhausted; read it with view_file\)/);
   assert.deepEqual(context.omittedFiles, ["second.js"]);
+});
+
+test("listRepositoryFiles lists tracked and untracked files but not ignored ones", () => {
+  const cwd = makeTempDir();
+  initGitRepo(cwd);
+  fs.mkdirSync(path.join(cwd, "src"));
+  fs.writeFileSync(path.join(cwd, "src", "app.js"), "export {};\n");
+  fs.writeFileSync(path.join(cwd, ".gitignore"), "dist/\n");
+  run("git", ["add", "."], { cwd });
+  run("git", ["commit", "-m", "init"], { cwd });
+  fs.writeFileSync(path.join(cwd, "notes.md"), "draft\n");
+  fs.mkdirSync(path.join(cwd, "dist"));
+  fs.writeFileSync(path.join(cwd, "dist", "bundle.js"), "built\n");
+
+  const listing = listRepositoryFiles(cwd);
+
+  assert.deepEqual(listing, { files: [".gitignore", "notes.md", "src/app.js"], total: 3, omitted: 0 });
+  assert.equal(formatFileListing(listing), ".gitignore\nnotes.md\nsrc/app.js");
+  assert.equal(listRepositoryFiles(makeTempDir()), null);
+  assert.equal(formatFileListing(null), "");
+});
+
+test("listRepositoryFiles stops at the byte budget and says how many files it left out", () => {
+  const cwd = makeTempDir();
+  initGitRepo(cwd);
+  for (const name of ["a.txt", "b.txt", "c.txt"]) {
+    fs.writeFileSync(path.join(cwd, name), "x\n");
+  }
+
+  const listing = listRepositoryFiles(cwd, { maxBytes: 12 });
+
+  assert.deepEqual(listing, { files: ["a.txt", "b.txt"], total: 3, omitted: 1 });
+  assert.equal(formatFileListing(listing), "a.txt\nb.txt\n(1 more files not listed)");
+});
+
+test("collectReviewContext ends with the repository file list", () => {
+  const cwd = makeTempDir();
+  initGitRepo(cwd);
+  fs.writeFileSync(path.join(cwd, "app.js"), "console.log(1);\n");
+  fs.writeFileSync(path.join(cwd, "lib.js"), "export {};\n");
+  run("git", ["add", "."], { cwd });
+  run("git", ["commit", "-m", "init"], { cwd });
+  fs.writeFileSync(path.join(cwd, "app.js"), "console.log(2);\n");
+
+  const context = collectReviewContext(cwd, { mode: "working-tree", label: "working tree diff" });
+
+  assert.match(context.content, /## Repository Files\n\napp\.js\nlib\.js\n$/);
+  assert.match(context.collectionGuidance, /cannot list folders, search file contents, run shell commands/);
 });

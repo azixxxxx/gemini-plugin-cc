@@ -99,20 +99,20 @@ function escapeMarkdownCell(value) {
     .trim();
 }
 
-export function formatGeminiResumeCommand(threadId, sandboxed = false) {
+export function formatResumeCommand(threadId) {
   if (!threadId) {
     return null;
   }
-  return `gemini ${sandboxed ? "--sandbox " : ""}--resume ${threadId}`;
+  return `agy --conversation ${threadId}`;
 }
 
 function formatJobResumeCommand(job) {
-  return formatGeminiResumeCommand(job?.threadId, Boolean(job?.sandboxed));
+  return formatResumeCommand(job?.threadId);
 }
 
 function appendActiveJobsTable(lines, jobs) {
   lines.push("Active jobs:");
-  lines.push("| Job | Kind | Status | Phase | Elapsed | Gemini Session ID | Summary | Actions |");
+  lines.push("| Job | Kind | Status | Phase | Elapsed | Conversation ID | Summary | Actions |");
   lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const job of jobs) {
     const actions = [`/gemini:status ${job.id}`];
@@ -140,11 +140,11 @@ function pushJobDetails(lines, job, options = {}) {
     lines.push(`  Duration: ${job.duration}`);
   }
   if (job.threadId) {
-    lines.push(`  Gemini session ID: ${job.threadId}`);
+    lines.push(`  Conversation ID: ${job.threadId}`);
   }
   const resumeCommand = formatJobResumeCommand(job);
   if (resumeCommand) {
-    lines.push(`  Resume in Gemini: ${resumeCommand}`);
+    lines.push(`  Resume in Antigravity CLI: ${resumeCommand}`);
   }
   if (job.logFile && options.showLog) {
     lines.push(`  Log: ${job.logFile}`);
@@ -187,10 +187,10 @@ export function renderSetupReport(report) {
     "",
     "Checks:",
     `- node: ${report.node.detail}`,
-    `- npm: ${report.npm.detail}`,
-    `- gemini: ${report.gemini.detail}`,
+    `- agy: ${report.agy.detail}`,
     `- auth: ${report.auth.detail}`,
     `- sandbox: ${report.sandbox.label}`,
+    ...(report.guard ? [`- tool guard: ${report.guard.label}`] : []),
     `- review gate: ${report.reviewGateEnabled ? "enabled" : "disabled"}`,
     ""
   ];
@@ -308,15 +308,16 @@ export function renderReviewResult(parsedResult, meta) {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-export function renderTaskResult(parsedResult, meta) {
+export function renderTaskResult(parsedResult, meta = {}) {
   const rawOutput = typeof parsedResult?.rawOutput === "string" ? parsedResult.rawOutput : "";
   const failureMessage = String(parsedResult?.failureMessage ?? "").trim();
+  const warnings = Array.isArray(meta.warnings) && meta.warnings.length > 0 ? `\nWarnings:\n${meta.warnings.map((warning) => `- ${warning}`).join("\n")}\n` : "";
   if (rawOutput) {
     const output = rawOutput.endsWith("\n") ? rawOutput : `${rawOutput}\n`;
-    return failureMessage ? `${output}\nGemini run failed: ${failureMessage}\n` : output;
+    return `${failureMessage ? `${output}\nGemini run failed: ${failureMessage}\n` : output}${warnings}`;
   }
 
-  return `${failureMessage || "Gemini did not return a final message."}\n`;
+  return `${failureMessage || "Gemini did not return a final message."}\n${warnings}`;
 }
 
 export function renderStatusReport(report) {
@@ -384,19 +385,18 @@ export function renderJobStatusReport(job) {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-function appendSessionFooter(output, threadId, sandboxed) {
+function appendSessionFooter(output, threadId) {
   if (!threadId) {
     return output;
   }
-  return `${output}\nGemini session ID: ${threadId}\nResume in Gemini: ${formatGeminiResumeCommand(threadId, sandboxed)}\n`;
+  return `${output}\nConversation ID: ${threadId}\nResume in Antigravity CLI: ${formatResumeCommand(threadId)}\n`;
 }
 
 export function renderStoredJobResult(job, storedJob) {
   const threadId = storedJob?.threadId ?? job.threadId ?? null;
-  const sandboxed = Boolean(storedJob?.sandboxed ?? job.sandboxed);
   if (isStructuredReviewStoredResult(storedJob) && storedJob?.rendered) {
     const output = storedJob.rendered.endsWith("\n") ? storedJob.rendered : `${storedJob.rendered}\n`;
-    return appendSessionFooter(output, threadId, sandboxed);
+    return appendSessionFooter(output, threadId);
   }
 
   const rawOutput =
@@ -405,12 +405,12 @@ export function renderStoredJobResult(job, storedJob) {
     "";
   if (rawOutput) {
     const output = rawOutput.endsWith("\n") ? rawOutput : `${rawOutput}\n`;
-    return appendSessionFooter(output, threadId, sandboxed);
+    return appendSessionFooter(output, threadId);
   }
 
   if (storedJob?.rendered) {
     const output = storedJob.rendered.endsWith("\n") ? storedJob.rendered : `${storedJob.rendered}\n`;
-    return appendSessionFooter(output, threadId, sandboxed);
+    return appendSessionFooter(output, threadId);
   }
 
   const lines = [
@@ -421,8 +421,8 @@ export function renderStoredJobResult(job, storedJob) {
   ];
 
   if (threadId) {
-    lines.push(`Gemini session ID: ${threadId}`);
-    lines.push(`Resume in Gemini: ${formatGeminiResumeCommand(threadId, sandboxed)}`);
+    lines.push(`Conversation ID: ${threadId}`);
+    lines.push(`Resume in Antigravity CLI: ${formatResumeCommand(threadId)}`);
   }
 
   if (job.summary) {

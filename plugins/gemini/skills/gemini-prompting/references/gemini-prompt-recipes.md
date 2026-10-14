@@ -148,7 +148,7 @@ Prefer primary sources.
 
 ## Hard Problem
 
-Use when the user asked for more effort. Gemini CLI has no effort flag, so ask for it in the prompt or pick `--model pro`.
+Use when the task is hard. If the user asked for more effort, also pass `--effort high` or another level the model supports.
 
 ```xml
 <role>

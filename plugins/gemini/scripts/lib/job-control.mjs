@@ -1,6 +1,6 @@
 import fs from "node:fs";
 
-import { describeSandbox } from "./gemini.mjs";
+import { describeSandbox } from "./agy.mjs";
 import { getConfig, listJobs, readJobFile, resolveJobFile } from "./state.mjs";
 import { SESSION_ID_ENV } from "./tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";

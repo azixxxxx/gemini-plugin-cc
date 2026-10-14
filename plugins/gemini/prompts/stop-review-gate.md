@@ -25,7 +25,7 @@ Challenge whether that specific work and its design choices should ship.
 The repository context above is the current working tree state. It is your evidence for whether code changed.
 Do not treat the previous Claude response as proof that code changes happened; verify that against the repository context or files you read before you block.
 Do not block based on older edits from earlier turns when the immediately previous turn did not itself make direct edits.
-This is a read-only run: shell commands and file edits are disabled.
+This is a read-only run: you can read files inside the repository with view_file, but you cannot list folders, search file contents, run shell commands, edit files, or use the web. "Repository Files" in the repository context lists the files that exist.
 </grounding_rules>
 
 <dig_deeper_nudge>

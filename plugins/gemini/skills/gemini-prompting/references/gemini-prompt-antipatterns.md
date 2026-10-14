@@ -89,15 +89,15 @@ Before finalizing, verify that the answer matches the observed evidence and task
 </verification_loop>
 ```
 
-## Inventing an effort flag
+## Putting runtime controls into the prompt text
 
 Bad:
 
 ```text
-task --effort high fix the race condition
+task fix the race condition, use high effort and the pro model
 ```
 
-Better: Gemini CLI has no effort flag. Pick `--model pro`, or add "Think very hard before answering." to the task text.
+Better: pass `--effort high` and `--model pro` as flags and keep the task text about the task. Add "Think very hard before answering." to the task text only when no effort was requested.
 
 ## Mixing unrelated jobs into one run
 

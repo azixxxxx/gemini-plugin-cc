@@ -5,9 +5,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 
-import { buildEnv, installFakeGemini, readFakeGeminiState } from "./fake-gemini-fixture.mjs";
+import { buildEnv, flagValue, installFakeAgy, readFakeAgyState } from "./fake-agy-fixture.mjs";
 import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
-import { READ_ONLY_POLICY_FILE, WRITE_GUARD_POLICY_FILE } from "../plugins/gemini/scripts/lib/gemini.mjs";
 import { resolveStateDir } from "../plugins/gemini/scripts/lib/state.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -15,7 +14,9 @@ const PLUGIN_ROOT = path.join(ROOT, "plugins", "gemini");
 const SCRIPT = path.join(PLUGIN_ROOT, "scripts", "gemini-companion.mjs");
 const STOP_HOOK = path.join(PLUGIN_ROOT, "scripts", "stop-review-gate-hook.mjs");
 const SESSION_HOOK = path.join(PLUGIN_ROOT, "scripts", "session-lifecycle-hook.mjs");
-const SANDBOX_DEFAULT = process.platform === "darwin";
+const REVIEW_SCHEMA = path.join(PLUGIN_ROOT, "schemas", "review-output.schema.json");
+const SANDBOX_DEFAULT = process.platform === "darwin" || process.platform === "linux";
+const GUARDED = process.platform !== "win32";
 
 // The companions under test never see a plugin data dir, so the test process must not either.
 delete process.env.GEMINI_COMPANION_PLUGIN_DATA;
@@ -52,12 +53,33 @@ function companion(args, { cwd, env, input } = {}) {
   return run("node", [SCRIPT, ...args], { cwd, env, input });
 }
 
+function setupFake(behavior = "ok") {
+  const binDir = makeTempDir();
+  installFakeAgy(binDir, behavior);
+  return { binDir, env: buildEnv(binDir) };
+}
+
 function headlessInvocations(binDir) {
-  return readFakeGeminiState(binDir).invocations;
+  return readFakeAgyState(binDir).invocations;
 }
 
 function lastInvocation(binDir) {
   return headlessInvocations(binDir).at(-1);
+}
+
+function assertReadOnly(invocation) {
+  assert.equal(invocation.args.includes("--dangerously-skip-permissions"), false);
+  assert.equal(invocation.args.includes("--sandbox"), false);
+  assertGuarded(invocation);
+}
+
+function assertGuarded(invocation) {
+  if (!GUARDED) {
+    return;
+  }
+  assert.equal(invocation.addDirs.length, 1);
+  assert.deepEqual(invocation.guardHooksPresent, [true]);
+  assert.equal(fs.existsSync(invocation.addDirs[0]), false, "the guard folder is removed after the run");
 }
 
 function processAlive(pid) {
@@ -69,69 +91,77 @@ function processAlive(pid) {
   }
 }
 
-test("setup reports ready when Gemini answers the auth probe", () => {
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
+test("setup reports ready when agy answers the sign-in check", () => {
+  const { binDir, env } = setupFake();
 
-  const result = companion(["setup", "--json"], { cwd: ROOT, env: buildEnv(binDir) });
+  const result = companion(["setup", "--json"], { cwd: ROOT, env });
 
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.ready, true);
-  assert.match(payload.gemini.detail, /gemini 0\.64\.0; headless runtime available/);
+  assert.match(payload.agy.detail, /^agy 1\.3\.5 at /);
   assert.equal(payload.auth.loggedIn, true);
   assert.equal(payload.auth.verified, true);
   assert.equal(payload.sandbox.enabled, SANDBOX_DEFAULT);
+  assert.equal(payload.guard.enabled, GUARDED);
+  assert.deepEqual(payload.warnings, []);
   const probe = lastInvocation(binDir);
-  assert.match(probe.stdin, /Reply with exactly the word OK/);
-  assert.ok(probe.args.includes(READ_ONLY_POLICY_FILE));
+  assert.match(probe.prompt, /Reply with exactly the word OK/);
+  assertReadOnly(probe);
 });
 
-test("setup asks for an update when Gemini CLI lacks --admin-policy", () => {
-  const binDir = makeTempDir();
-  installFakeGemini(binDir, "old-version");
+test("setup explains how to get agy when it is missing", () => {
+  const { binDir } = setupFake();
+  const env = buildEnv(binDir, { GEMINI_COMPANION_AGY_PATH: path.join(binDir, "missing-agy") });
 
-  const result = companion(["setup", "--json"], { cwd: ROOT, env: buildEnv(binDir) });
+  const result = companion(["setup", "--json"], { cwd: ROOT, env });
 
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.ready, false);
-  assert.equal(payload.gemini.tooOld, true);
-  assert.ok(payload.nextSteps.some((step) => /Update Gemini CLI with `npm install -g @google\/gemini-cli@latest`/.test(step)));
+  assert.equal(payload.agy.available, false);
+  assert.ok(payload.nextSteps.some((step) => /Gemini desktop app, which bundles the Antigravity CLI `agy`/.test(step)));
   assert.equal(headlessInvocations(binDir).length, 0);
 });
 
-test("setup reports an expired login with sign-in guidance", () => {
-  const binDir = makeTempDir();
-  installFakeGemini(binDir, "auth-failure");
+test("setup asks for an update when agy lacks the headless flags", () => {
+  const { binDir, env } = setupFake("old-version");
 
-  const result = companion(["setup"], { cwd: ROOT, env: buildEnv(binDir) });
-
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Status: needs attention/);
-  assert.match(result.stdout, /auth: .*not signed in, or the cached credentials expired/);
-  assert.match(result.stdout, /run `gemini`, choose “Sign in with Google”/);
-});
-
-test("setup suggests disabling the sandbox when it fails to start", () => {
-  const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir, "sandbox-failure");
-
-  const result = companion(["setup", "--enable-sandbox", "--json"], { cwd: repo, env: buildEnv(binDir) });
+  const result = companion(["setup", "--json"], { cwd: ROOT, env });
 
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.ready, false);
-  assert.equal(payload.auth.probeErrorKind, "sandbox");
-  assert.ok(payload.nextSteps.some((step) => /\/gemini:setup --disable-sandbox/.test(step)));
+  assert.equal(payload.agy.tooOld, true);
+  assert.ok(payload.nextSteps.some((step) => /`agy update`/.test(step)));
+  assert.equal(headlessInvocations(binDir).length, 0);
+});
+
+test("setup reports an expired sign-in with the /login steps", () => {
+  const { env } = setupFake("auth-failure");
+
+  const result = companion(["setup"], { cwd: ROOT, env });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Status: needs attention/);
+  assert.match(result.stdout, /auth: agy is not signed in or its sign-in expired/);
+  assert.match(result.stdout, /run `agy`, type `\/login`/);
+});
+
+test("setup keeps Antigravity's eligibility message and fix", () => {
+  const { env } = setupFake("eligibility");
+
+  const payload = JSON.parse(companion(["setup", "--json"], { cwd: ROOT, env }).stdout);
+
+  assert.equal(payload.ready, false);
+  assert.equal(payload.auth.probeErrorKind, "eligibility");
+  assert.match(payload.auth.detail, /not currently available in your location/);
+  assert.ok(payload.nextSteps.some((step) => /network location where Antigravity is available/.test(step)));
 });
 
 test("setup toggles the review gate and the sandbox per repository", () => {
   const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
-  const env = buildEnv(binDir);
+  const { binDir, env } = setupFake();
 
   const enabled = companion(["setup", "--enable-review-gate", "--disable-sandbox", "--json"], { cwd: repo, env });
   assert.equal(enabled.status, 0, enabled.stderr);
@@ -140,19 +170,20 @@ test("setup toggles the review gate and the sandbox per repository", () => {
   assert.equal(payload.sandbox.enabled, false);
   assert.ok(payload.actionsTaken.some((action) => /Enabled the stop-time review gate/.test(action)));
   assert.ok(payload.actionsTaken.some((action) => /Disabled the Gemini sandbox/.test(action)));
-  assert.ok(!lastInvocation(binDir).args.includes("--sandbox"));
+
+  assert.equal(companion(["task", "--write", "fix it"], { cwd: repo, env }).status, 0);
+  assert.equal(lastInvocation(binDir).args.includes("--sandbox"), false);
 
   const conflict = companion(["setup", "--enable-sandbox", "--disable-sandbox"], { cwd: repo, env });
   assert.notEqual(conflict.status, 0);
   assert.match(conflict.stderr, /Choose either --enable-sandbox or --disable-sandbox/);
 });
 
-test("review runs read-only with the diff inline and renders the verdict", () => {
+test("review runs read-only with the diff inline and agy's structured output", () => {
   const repo = makeDirtyRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
+  const { binDir, env } = setupFake();
 
-  const result = companion(["review"], { cwd: repo, env: buildEnv(binDir) });
+  const result = companion(["review"], { cwd: repo, env });
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /# Gemini Review/);
@@ -160,77 +191,69 @@ test("review runs read-only with the diff inline and renders the verdict", () =>
   assert.match(result.stdout, /Verdict: approve/);
   assert.match(result.stdout, /No material findings\./);
   const invocation = lastInvocation(binDir);
-  assert.deepEqual(invocation.args.slice(0, 6), ["--output-format", "stream-json", "--approval-mode", "default", "--admin-policy", READ_ONLY_POLICY_FILE]);
-  assert.equal(invocation.args.includes("--sandbox"), SANDBOX_DEFAULT);
-  assert.match(invocation.stdin, /performing a code review/);
-  assert.match(invocation.stdin, /\+hello again/);
-  assert.match(invocation.stdin, /"verdict"/);
+  assertReadOnly(invocation);
+  assert.equal(flagValue(invocation.args, "--json-schema"), REVIEW_SCHEMA);
+  assert.match(invocation.prompt, /performing a code review/);
+  assert.match(invocation.prompt, /\+hello again/);
+  assert.match(invocation.prompt, /## Repository Files\n\nREADME\.md/);
+  assert.match(invocation.prompt, /"verdict"/);
   assert.equal(fs.realpathSync(invocation.cwd), fs.realpathSync(repo));
 });
 
-test("review uses a smaller diff budget when the Gemini sandbox is on", () => {
-  const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
-  const env = buildEnv(binDir);
-  fs.writeFileSync(path.join(repo, "big.txt"), `${"line of text\n".repeat(50000)}`);
-  run("git", ["add", "big.txt"], { cwd: repo });
+test("review keeps working when the guard blocks Gemini's shell and web calls", { skip: !GUARDED }, () => {
+  const repo = makeDirtyRepo();
+  const { env } = setupFake("forbidden-tools");
 
-  assert.equal(companion(["setup", "--enable-sandbox", "--json"], { cwd: repo, env }).status, 0);
-  const sandboxed = JSON.parse(companion(["review", "--json"], { cwd: repo, env }).stdout);
-  assert.equal(sandboxed.context.inputMode, "truncated-diff");
-  assert.ok(lastInvocation(binDir).args.includes("--sandbox"));
-  assert.ok(Buffer.byteLength(lastInvocation(binDir).stdin, "utf8") < 768 * 1024);
+  const result = companion(["review", "--json"], { cwd: repo, env });
 
-  assert.equal(companion(["setup", "--disable-sandbox", "--json"], { cwd: repo, env }).status, 0);
-  const unsandboxed = JSON.parse(companion(["review", "--json"], { cwd: repo, env }).stdout);
-  assert.equal(unsandboxed.context.inputMode, "inline-diff");
-  assert.equal(lastInvocation(binDir).args.includes("--sandbox"), false);
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.result.verdict, "approve");
+  assert.deepEqual(
+    payload.gemini.blockedToolCalls.map((call) => call.toolName),
+    ["run_command", "read_url_content", "view_file", "invoke_subagent"]
+  );
+  assert.deepEqual(payload.gemini.warnings, []);
 });
 
 test("review accepts JSON wrapped in a Markdown fence", () => {
   const repo = makeDirtyRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir, "review-fenced");
+  const { env } = setupFake("review-fenced");
 
-  const result = companion(["review", "--json"], { cwd: repo, env: buildEnv(binDir) });
+  const result = companion(["review", "--json"], { cwd: repo, env });
 
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.result.verdict, "approve");
   assert.equal(payload.parseError, null);
-  assert.equal(payload.threadId, "gemini-session-1");
+  assert.equal(payload.threadId, "conv-1");
 });
 
 test("review explains when Gemini returns no review JSON", () => {
   const repo = makeDirtyRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir, "review-invalid");
+  const { env } = setupFake("review-invalid");
 
-  const result = companion(["review"], { cwd: repo, env: buildEnv(binDir) });
+  const result = companion(["review"], { cwd: repo, env });
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Gemini did not return valid structured JSON\./);
   assert.match(result.stdout, /Looks good to me overall\./);
 });
 
-test("review reports a failed Gemini run instead of a parse error", () => {
+test("review reports a failed agy run instead of a parse error", () => {
   const repo = makeDirtyRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir, "auth-failure");
+  const { env } = setupFake("auth-failure");
 
-  const result = companion(["review"], { cwd: repo, env: buildEnv(binDir) });
+  const result = companion(["review"], { cwd: repo, env });
 
   assert.notEqual(result.status, 0);
   assert.match(result.stdout, /Gemini run failed\./);
-  assert.match(result.stdout, /not signed in or its credentials expired/);
+  assert.match(result.stdout, /agy is not signed in or its sign-in expired/);
 });
 
 test("review rejects focus text and unsupported scopes", () => {
   const repo = makeDirtyRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
-  const env = buildEnv(binDir);
+  const { binDir, env } = setupFake();
 
   const focus = companion(["review", "--scope working-tree focus on auth"], { cwd: repo, env });
   assert.notEqual(focus.status, 0);
@@ -244,129 +267,154 @@ test("review rejects focus text and unsupported scopes", () => {
   assert.equal(headlessInvocations(binDir).length, 0);
 });
 
-test("adversarial review forwards focus text and renders findings by severity", () => {
+test("adversarial review forwards focus text, resolves --model pro, and renders findings", () => {
   const repo = makeDirtyRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
+  const { binDir, env } = setupFake();
 
-  const result = companion(["adversarial-review", "--model", "pro", "look for race conditions"], { cwd: repo, env: buildEnv(binDir) });
+  const result = companion(["adversarial-review", "--model", "pro", "--effort", "high", "look for race conditions"], { cwd: repo, env });
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /# Gemini Adversarial Review/);
   assert.match(result.stdout, /Verdict: needs-attention/);
   assert.match(result.stdout, /- \[high\] Missing empty-state guard \(app\.js:1\)/);
   const invocation = lastInvocation(binDir);
-  assert.match(invocation.stdin, /User focus: look for race conditions/);
-  assert.ok(invocation.args.includes(READ_ONLY_POLICY_FILE));
-  assert.deepEqual(invocation.args.slice(invocation.args.indexOf("--model"), invocation.args.indexOf("--model") + 2), ["--model", "pro"]);
+  assert.match(invocation.prompt, /User focus: look for race conditions/);
+  assertReadOnly(invocation);
+  assert.equal(flagValue(invocation.args, "--model"), "gemini-3.1-pro");
+  assert.equal(flagValue(invocation.args, "--effort"), "high");
 });
 
 test("adversarial review supports base-branch targeting", () => {
   const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
+  const { binDir, env } = setupFake();
   run("git", ["checkout", "-b", "feature"], { cwd: repo });
   fs.writeFileSync(path.join(repo, "app.js"), "export const value = 1;\n");
   run("git", ["add", "app.js"], { cwd: repo });
   run("git", ["commit", "-m", "feature"], { cwd: repo });
 
-  const result = companion(["adversarial-review", "--base main"], { cwd: repo, env: buildEnv(binDir) });
+  const result = companion(["adversarial-review", "--base main"], { cwd: repo, env });
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Target: branch diff against main/);
-  assert.match(lastInvocation(binDir).stdin, /export const value = 1;/);
+  assert.match(lastInvocation(binDir).prompt, /export const value = 1;/);
 });
 
-test("write tasks use yolo approval with the write guard and report touched work", () => {
+test("write tasks skip permissions inside the guard and never commit", () => {
   const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir, "tool-flow");
+  const { binDir, env } = setupFake("tool-flow");
 
-  const result = companion(["task", "--write", "--json", "fix the bug"], { cwd: repo, env: buildEnv(binDir) });
+  const result = companion(["task", "--write", "--json", "fix the bug"], { cwd: repo, env });
 
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.match(payload.rawOutput, /Fixed the bug in app\.js\./);
-  assert.deepEqual(payload.touchedFiles, ["app.js"]);
-  assert.equal(payload.threadId, "gemini-session-1");
+  assert.deepEqual(payload.touchedFiles.map((file) => fs.realpathSync(file)), [fs.realpathSync(path.join(repo, "app.js"))]);
+  assert.equal(payload.threadId, "conv-1");
   const invocation = lastInvocation(binDir);
-  assert.deepEqual(invocation.args.slice(0, 6), ["--output-format", "stream-json", "--approval-mode", "yolo", "--admin-policy", WRITE_GUARD_POLICY_FILE]);
-  assert.equal(invocation.stdin, "fix the bug");
+  assert.ok(invocation.args.includes("--dangerously-skip-permissions"));
+  assert.equal(invocation.args.includes("--sandbox"), SANDBOX_DEFAULT);
+  assertGuarded(invocation);
+  assert.match(invocation.prompt, /^fix the bug\n\n<operating_constraints>/);
+  assert.match(invocation.prompt, /do not run git commit, git push/);
+  if (GUARDED) {
+    assert.equal(payload.blockedToolCalls.length, 1);
+    assert.match(payload.blockedToolCalls[0].reason, /blocks `git commit`/);
+    assert.equal(run("git", ["rev-list", "--count", "HEAD"], { cwd: repo }).stdout.trim(), "1");
+  }
 });
 
-test("read-only tasks keep the read-only policy and pass the model through", () => {
+test("write tasks cannot edit files outside the repository", { skip: !GUARDED }, () => {
   const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
+  const { env } = setupFake("outside-edit");
 
-  const result = companion(["task", "-m", "flash", "explain the build"], { cwd: repo, env: buildEnv(binDir) });
+  const payload = JSON.parse(companion(["task", "--write", "--json", "edit the system file"], { cwd: repo, env }).stdout);
+
+  assert.equal(payload.status, 0);
+  assert.deepEqual(payload.touchedFiles, []);
+  assert.match(payload.blockedToolCalls[0].reason, /Edits outside the repository are blocked/);
+});
+
+test("read-only tasks stay read-only and resolve --model flash", () => {
+  const repo = makeRepo();
+  const { binDir, env } = setupFake();
+
+  const result = companion(["task", "-m", "flash", "explain the build"], { cwd: repo, env });
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Handled the requested task\./);
   const invocation = lastInvocation(binDir);
-  assert.ok(invocation.args.includes(READ_ONLY_POLICY_FILE));
-  assert.ok(invocation.args.includes("default"));
-  assert.deepEqual(invocation.args.slice(invocation.args.indexOf("--model"), invocation.args.indexOf("--model") + 2), ["--model", "flash"]);
+  assertReadOnly(invocation);
+  // agy's model cannot list folders, so read-only tasks start with the limits and the file list.
+  assert.match(invocation.prompt, /^<read_only_run>\nThis run is read-only\. You can read files inside .+ with view_file\./);
+  assert.match(invocation.prompt, /Files in the repository:\nREADME\.md\n<\/read_only_run>\n\nexplain the build$/);
+  assert.equal(flagValue(invocation.args, "--model"), "gemini-3.8-flash");
 });
 
-test("task rejects --effort because Gemini CLI has no equivalent", () => {
+test("task validates --effort and passes concrete models through", () => {
   const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
+  const { binDir, env } = setupFake();
 
-  const result = companion(["task", "--effort", "high", "fix it"], { cwd: repo, env: buildEnv(binDir) });
-
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /has no reasoning-effort flag/);
+  const invalid = companion(["task", "--effort", "extreme", "fix it"], { cwd: repo, env });
+  assert.notEqual(invalid.status, 0);
+  assert.match(invalid.stderr, /Unsupported reasoning effort "extreme"\. Use one of: low, medium, high, xhigh, max\./);
   assert.equal(headlessInvocations(binDir).length, 0);
+
+  assert.equal(companion(["task", "--effort", "LOW", "--model", "claude-sonnet-4-6", "fix it"], { cwd: repo, env }).status, 0);
+  const invocation = lastInvocation(binDir);
+  assert.equal(flagValue(invocation.args, "--effort"), "low");
+  assert.equal(flagValue(invocation.args, "--model"), "claude-sonnet-4-6");
+});
+
+test("task reports models that agy does not know", () => {
+  const repo = makeRepo();
+
+  const noPro = companion(["task", "--model", "pro", "fix it"], { cwd: repo, env: setupFake("no-pro-models").env });
+  assert.notEqual(noPro.status, 0);
+  assert.match(noPro.stderr, /No agy model matches "pro"\. Run `agy models`/);
+
+  const unknown = companion(["task", "--model", "gemini-9-ultra", "fix it"], { cwd: repo, env: setupFake().env });
+  assert.notEqual(unknown.status, 0);
+  assert.match(unknown.stdout, /agy rejected the model or effort: model gemini-9-ultra is not recognized/);
 });
 
 test("task prints Gemini's error when the run fails", () => {
   const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir, "api-error");
+  const { env } = setupFake("api-error");
 
-  const result = companion(["task", "--write", "do it"], { cwd: repo, env: buildEnv(binDir) });
+  const result = companion(["task", "--write", "do it"], { cwd: repo, env });
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stdout, /Quota exceeded for model gemini-2\.5-pro/);
+  assert.match(result.stdout, /Gemini hit a usage limit: 429 RESOURCE_EXHAUSTED/);
 });
 
-test("task --resume-last resumes the latest session in the same sandbox mode", () => {
+test("task --resume-last continues the latest conversation", () => {
   const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
-  const env = buildEnv(binDir);
+  const { binDir, env } = setupFake();
 
-  assert.equal(companion(["setup", "--disable-sandbox", "--json"], { cwd: repo, env }).status, 0);
   const first = companion(["task", "--write", "start the fix"], { cwd: repo, env });
   assert.equal(first.status, 0, first.stderr);
-  assert.equal(companion(["setup", "--enable-sandbox", "--json"], { cwd: repo, env }).status, 0);
 
   const resumed = companion(["task", "--resume", "--write"], { cwd: repo, env });
 
   assert.equal(resumed.status, 0, resumed.stderr);
-  assert.match(resumed.stdout, /Resumed the prior session\./);
+  assert.match(resumed.stdout, /Resumed the prior conversation\./);
   const invocation = lastInvocation(binDir);
-  assert.deepEqual(invocation.args.slice(invocation.args.indexOf("--resume"), invocation.args.indexOf("--resume") + 2), ["--resume", "gemini-session-2"]);
-  assert.equal(invocation.args.includes("--sandbox"), false);
-  assert.match(invocation.stdin, /Continue from the current session state/);
+  assert.equal(flagValue(invocation.args, "--conversation"), "conv-1");
+  assert.match(invocation.prompt, /^Continue from the current conversation state/);
 });
 
 test("task --resume and --fresh are routing flags, not prompt text", () => {
   const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
-  const env = buildEnv(binDir);
+  const { binDir, env } = setupFake();
 
   assert.equal(companion(["task", "--fresh", "investigate the flake"], { cwd: repo, env }).status, 0);
-  assert.equal(lastInvocation(binDir).stdin, "investigate the flake");
-  assert.equal(lastInvocation(binDir).args.includes("--resume"), false);
+  assert.match(lastInvocation(binDir).prompt, /<\/read_only_run>\n\ninvestigate the flake$/);
+  assert.equal(lastInvocation(binDir).args.includes("--conversation"), false);
 
   const resumed = companion(["task", "--resume", "apply the top fix"], { cwd: repo, env });
   assert.equal(resumed.status, 0, resumed.stderr);
-  assert.equal(lastInvocation(binDir).stdin, "apply the top fix");
-  assert.ok(lastInvocation(binDir).args.includes("--resume"));
+  assert.match(lastInvocation(binDir).prompt, /<\/read_only_run>\n\napply the top fix$/);
+  assert.equal(flagValue(lastInvocation(binDir).args, "--conversation"), "conv-1");
 
   const both = companion(["task", "--resume", "--fresh", "x"], { cwd: repo, env });
   assert.notEqual(both.status, 0);
@@ -375,8 +423,7 @@ test("task --resume and --fresh are routing flags, not prompt text", () => {
 
 test("task resume candidates stay inside the current Claude session", () => {
   const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
+  const { binDir } = setupFake();
 
   const other = buildEnv(binDir, { GEMINI_COMPANION_SESSION_ID: "session-a" });
   assert.equal(companion(["task", "first task"], { cwd: repo, env: other }).status, 0);
@@ -387,18 +434,16 @@ test("task resume candidates stay inside the current Claude session", () => {
 
   const noResume = companion(["task", "--resume-last"], { cwd: repo, env: mine });
   assert.notEqual(noResume.status, 0);
-  assert.match(noResume.stderr, /No previous Gemini task session was found/);
+  assert.match(noResume.stderr, /No previous Gemini task conversation was found/);
 
   const otherCandidate = JSON.parse(companion(["task-resume-candidate", "--json"], { cwd: repo, env: other }).stdout);
   assert.equal(otherCandidate.available, true);
-  assert.equal(otherCandidate.candidate.threadId, "gemini-session-1");
+  assert.equal(otherCandidate.candidate.threadId, "conv-1");
 });
 
 test("task --background runs in a detached worker and exposes status and result", async () => {
   const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
-  const env = buildEnv(binDir);
+  const { env } = setupFake();
 
   const launched = companion(["task", "--background", "--json", "investigate the failing test"], { cwd: repo, env });
   assert.equal(launched.status, 0, launched.stderr);
@@ -415,14 +460,13 @@ test("task --background runs in a detached worker and exposes status and result"
     return output.status === 0 ? output : null;
   });
   assert.match(result.stdout, /Handled the requested task\./);
-  assert.match(result.stdout, /Gemini session ID: gemini-session-1/);
-  assert.match(result.stdout, new RegExp(`Resume in Gemini: gemini ${SANDBOX_DEFAULT ? "--sandbox " : ""}--resume gemini-session-1`));
+  assert.match(result.stdout, /Conversation ID: conv-1/);
+  assert.match(result.stdout, /Resume in Antigravity CLI: agy --conversation conv-1/);
 });
 
-test("status lists jobs from the current session with Gemini hints", () => {
+test("status lists jobs from the current session with the sandbox mode", () => {
   const repo = makeDirtyRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
+  const { binDir } = setupFake();
   const env = buildEnv(binDir, { GEMINI_COMPANION_SESSION_ID: "session-1" });
 
   assert.equal(companion(["review"], { cwd: repo, env }).status, 0);
@@ -432,7 +476,7 @@ test("status lists jobs from the current session with Gemini hints", () => {
   const status = companion(["status"], { cwd: repo, env });
   assert.equal(status.status, 0, status.stderr);
   assert.match(status.stdout, /# Gemini Status/);
-  assert.match(status.stdout, new RegExp(`Sandbox: ${SANDBOX_DEFAULT ? "macOS seatbelt" : "disabled"}`));
+  assert.match(status.stdout, new RegExp(`Sandbox: ${SANDBOX_DEFAULT ? "agy --sandbox" : "disabled"}`));
   assert.match(status.stdout, /Latest finished:/);
   assert.match(status.stdout, /Gemini Task/);
   assert.match(status.stdout, /Gemini Review/);
@@ -446,33 +490,29 @@ test("status lists jobs from the current session with Gemini hints", () => {
   assert.match(single.stdout, /Review changes: \/gemini:review --wait/);
 });
 
-test("result returns the stored review output with its session id", () => {
+test("result returns the stored review output with its conversation id", () => {
   const repo = makeDirtyRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
-  const env = buildEnv(binDir);
+  const { env } = setupFake();
 
   assert.equal(companion(["adversarial-review"], { cwd: repo, env }).status, 0);
   const result = companion(["result"], { cwd: repo, env });
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /^# Gemini Adversarial Review/);
-  assert.match(result.stdout, /Gemini session ID: gemini-session-1/);
+  assert.match(result.stdout, /Conversation ID: conv-1/);
 });
 
-test("cancel stops a background task and its Gemini process group", async () => {
+test("cancel stops a background task and its agy process group", async () => {
   const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir, "stubborn");
-  const env = buildEnv(binDir);
+  const { binDir, env } = setupFake("stubborn");
 
   const launched = JSON.parse(companion(["task", "--background", "--json", "--write", "run the slow suite"], { cwd: repo, env }).stdout);
   const running = await waitFor(() => {
     const snapshot = JSON.parse(companion(["status", launched.jobId, "--json"], { cwd: repo, env }).stdout);
     return snapshot.job.status === "running" && snapshot.job.geminiPid ? snapshot.job : null;
   });
-  const geminiPid = running.geminiPid;
-  assert.equal(processAlive(geminiPid), true);
+  const runnerPid = running.geminiPid;
+  assert.equal(processAlive(runnerPid), true);
   const fakePid = await waitFor(() => lastInvocation(binDir)?.pid);
   assert.equal(processAlive(fakePid), true);
 
@@ -482,20 +522,19 @@ test("cancel stops a background task and its Gemini process group", async () => 
   const payload = JSON.parse(cancelled.stdout);
   assert.equal(payload.status, "cancelled");
   assert.equal(payload.geminiStopAttempted, true);
-  await waitFor(() => !processAlive(geminiPid) && !processAlive(fakePid));
+  await waitFor(() => !processAlive(runnerPid) && !processAlive(fakePid));
   const snapshot = JSON.parse(companion(["status", launched.jobId, "--json"], { cwd: repo, env }).stdout);
   assert.equal(snapshot.job.status, "cancelled");
   await new Promise((resolve) => setTimeout(resolve, 500));
   assert.equal(JSON.parse(companion(["status", launched.jobId, "--json"], { cwd: repo, env }).stdout).job.status, "cancelled");
 });
 
-test("Gemini stops when its companion is killed without a chance to clean up", { skip: process.platform === "win32" }, async () => {
+test("agy stops when its companion is killed without a chance to clean up", { skip: process.platform === "win32" }, async () => {
   const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir, "slow-task");
+  const { binDir, env } = setupFake("slow-task");
   const companionProcess = spawn(process.execPath, [SCRIPT, "task", "--write", "run the slow suite"], {
     cwd: repo,
-    env: buildEnv(binDir),
+    env,
     stdio: "ignore"
   });
 
@@ -504,12 +543,15 @@ test("Gemini stops when its companion is killed without a chance to clean up", {
   companionProcess.kill("SIGKILL");
 
   await waitFor(() => !processAlive(fakePid), { timeoutMs: 10000 });
+  // The runner outlives the companion long enough to remove the guard folder.
+  for (const guardDir of lastInvocation(binDir).addDirs) {
+    await waitFor(() => !fs.existsSync(guardDir), { timeoutMs: 10000 });
+  }
 });
 
 test("cancel without a job id ignores active jobs from other sessions", async () => {
   const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir, "slow-task");
+  const { binDir } = setupFake("slow-task");
   const other = buildEnv(binDir, { GEMINI_COMPANION_SESSION_ID: "session-a" });
 
   const launched = JSON.parse(companion(["task", "--background", "--json", "slow"], { cwd: repo, env: other }).stdout);
@@ -544,8 +586,7 @@ test("session start hook exports the session id and its own plugin data variable
 
 test("companion state ignores another plugin's CLAUDE_PLUGIN_DATA", () => {
   const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
+  const { binDir } = setupFake();
   const foreignData = makeTempDir();
   const ownData = makeTempDir();
 
@@ -561,8 +602,7 @@ test("companion state ignores another plugin's CLAUDE_PLUGIN_DATA", () => {
 
 test("session end stops running jobs of the ending session and drops its records", async () => {
   const repo = makeRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir, "slow-task");
+  const { binDir } = setupFake("slow-task");
   const env = buildEnv(binDir, { GEMINI_COMPANION_SESSION_ID: "ending-session" });
 
   const launched = JSON.parse(companion(["task", "--background", "--json", "slow"], { cwd: repo, env }).stdout);
@@ -585,9 +625,7 @@ test("session end stops running jobs of the ending session and drops its records
 
 test("stop hook reviews the working tree and blocks on findings when the gate is enabled", () => {
   const repo = makeDirtyRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir, "stop-block");
-  const env = buildEnv(binDir);
+  const { binDir, env } = setupFake("stop-block");
   assert.equal(companion(["setup", "--enable-review-gate", "--json"], { cwd: repo, env }).status, 0);
 
   const result = run("node", [STOP_HOOK], {
@@ -601,18 +639,16 @@ test("stop hook reviews the working tree and blocks on findings when the gate is
   assert.equal(decision.decision, "block");
   assert.match(decision.reason, /Missing empty-state guard/);
   const invocation = lastInvocation(binDir);
-  assert.match(invocation.stdin, /Run a stop-gate review of the previous Claude turn\./);
-  assert.match(invocation.stdin, /## Git Status/);
-  assert.match(invocation.stdin, /\+hello again/);
-  assert.match(invocation.stdin, /Previous Claude response:\nI edited README\.md\./);
-  assert.ok(invocation.args.includes(READ_ONLY_POLICY_FILE));
+  assert.match(invocation.prompt, /Run a stop-gate review of the previous Claude turn\./);
+  assert.match(invocation.prompt, /## Git Status/);
+  assert.match(invocation.prompt, /\+hello again/);
+  assert.match(invocation.prompt, /Previous Claude response:\nI edited README\.md\./);
+  assertReadOnly(invocation);
 });
 
 test("stop hook allows a clean review and stays quiet when the gate is disabled", () => {
   const repo = makeDirtyRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
-  const env = buildEnv(binDir);
+  const { binDir, env } = setupFake();
 
   const disabled = run("node", [STOP_HOOK], { cwd: repo, env, input: JSON.stringify({ cwd: repo }) });
   assert.equal(disabled.status, 0, disabled.stderr);
@@ -625,13 +661,11 @@ test("stop hook allows a clean review and stays quiet when the gate is disabled"
   assert.equal(allowed.stdout.trim(), "");
 });
 
-test("stop hook does not block when Gemini CLI is unavailable", () => {
+test("stop hook does not block when agy is unavailable", () => {
   const repo = makeDirtyRepo();
-  const binDir = makeTempDir();
-  installFakeGemini(binDir);
-  const env = buildEnv(binDir);
+  const { binDir, env } = setupFake();
   assert.equal(companion(["setup", "--enable-review-gate", "--json"], { cwd: repo, env }).status, 0);
-  installFakeGemini(binDir, "old-version");
+  installFakeAgy(binDir, "old-version");
 
   const result = run("node", [STOP_HOOK], { cwd: repo, env, input: JSON.stringify({ cwd: repo }) });
 

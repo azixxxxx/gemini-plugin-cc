@@ -55,6 +55,6 @@ test("renderStoredJobResult prefers rendered output for structured review jobs",
 
   assert.match(output, /^# Gemini Adversarial Review/);
   assert.doesNotMatch(output, /^\{/);
-  assert.match(output, /Gemini session ID: thr_123/);
-  assert.match(output, /Resume in Gemini: gemini --sandbox --resume thr_123/);
+  assert.match(output, /Conversation ID: thr_123/);
+  assert.match(output, /Resume in Antigravity CLI: agy --conversation thr_123/);
 });

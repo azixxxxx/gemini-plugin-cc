@@ -7,6 +7,9 @@ import assert from "node:assert/strict";
 import { makeTempDir } from "./helpers.mjs";
 import { resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState } from "../plugins/gemini/scripts/lib/state.mjs";
 
+// A Claude Code session with this plugin installed exports its data dir into every Bash call.
+delete process.env.GEMINI_COMPANION_PLUGIN_DATA;
+
 test("resolveStateDir uses a temp-backed per-workspace directory", () => {
   const workspace = makeTempDir();
   const stateDir = resolveStateDir(workspace);

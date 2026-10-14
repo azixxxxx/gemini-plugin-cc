@@ -4,7 +4,7 @@ description: Proactively use when Claude Code is stuck, wants a second implement
 model: sonnet
 tools: Bash
 skills:
-  - gemini-cli-runtime
+  - gemini-runtime
   - gemini-prompting
 ---
 
@@ -26,11 +26,11 @@ Forwarding rules:
 - Do not use that skill to inspect the repository, reason through the problem yourself, draft a solution, or do any independent work beyond shaping the forwarded prompt text.
 - Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own.
 - Do not call `review`, `adversarial-review`, `status`, `result`, or `cancel`. This subagent only forwards to `task`.
+- Leave `--effort` unset unless the user explicitly requests a specific reasoning effort.
 - Leave model unset by default. Only add `--model` when the user explicitly asks for a specific model.
-- Gemini CLI resolves the aliases `auto`, `pro`, `flash`, and `flash-lite`. If the user asks for one of them, pass it through with `--model`.
-- If the user asks for a concrete model name such as `gemini-2.5-flash`, pass it through with `--model`.
-- Gemini CLI has no reasoning-effort flag. Never add `--effort`.
-- Treat `--model <value>` as a runtime control and do not include it in the task text you pass through.
+- If the user asks for `pro` or `flash`, pass it through with `--model`; the companion maps it to the first matching model in `agy models`.
+- If the user asks for a concrete agy model name such as `gemini-3.1-pro-high`, pass it through with `--model`.
+- Treat `--effort <value>` and `--model <value>` as runtime controls and do not include them in the task text you pass through.
 - Default to a write-capable Gemini run by adding `--write` unless the user explicitly asks for read-only behavior or only wants review, diagnosis, or research without edits.
 - Treat `--resume` and `--fresh` as routing controls and do not include them in the task text you pass through.
 - `--resume` means add `--resume-last`.

@@ -6,18 +6,19 @@ This product is a modified version of the Codex plugin for Claude Code
 licensed under the Apache License, Version 2.0.
 
 Modifications by azixxxxx, 2026:
-- Replaced the Codex app-server and broker runtime with a headless Gemini CLI
-  adapter (`gemini --output-format stream-json`).
+- Replaced the Codex app-server and broker runtime with a headless adapter for
+  Google's Antigravity CLI (`agy --input-format stream-json --output-format
+  stream-json`). Version 0.1.0 used Gemini CLI instead.
 - Renamed the plugin, commands, agent, skills, and runtime script from Codex to
-  Gemini, and removed `/codex:transfer` and the reasoning-effort option, which
-  have no Gemini CLI equivalent.
-- Added Gemini admin policies that keep review and read-only runs read-only, a
-  write guard that blocks `git commit` and `git push`, and an optional Gemini
-  sandbox toggle.
+  Gemini, and removed `/codex:transfer`.
+- Added a per-run tool guard, an agy PreToolUse hook passed with `--add-dir`,
+  that keeps review and read-only runs read-only and blocks `git commit`,
+  `git push`, edits outside the repository, and subagents in write runs, plus
+  an optional agy sandbox toggle.
 - Rewrote the review, adversarial review, and stop-gate prompts for Gemini and
   replaced the prompting skill with Gemini-specific guidance.
 - Changed review context collection to inline diffs within a byte budget.
-- Rewrote the tests for the Gemini runtime.
+- Rewrote the tests for the agy runtime.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.

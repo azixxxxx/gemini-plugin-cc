@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import process from "node:process";
 
-import { terminateGeminiProcessTree } from "./lib/gemini.mjs";
+import { terminateAgyProcessTree } from "./lib/agy.mjs";
 import { terminateProcessTree } from "./lib/process.mjs";
 import { loadState, PLUGIN_DATA_ENV, resolveStateFile, saveState } from "./lib/state.mjs";
 import { SESSION_ID_ENV } from "./lib/tracked-jobs.mjs";
@@ -59,7 +59,7 @@ function cleanupSessionJobs(cwd, sessionId) {
       // Ignore teardown failures during session shutdown.
     }
     try {
-      terminateGeminiProcessTree(Number(job.geminiPid ?? Number.NaN), { graceMs: 1000 });
+      terminateAgyProcessTree(Number(job.geminiPid ?? Number.NaN), { graceMs: 1000 });
     } catch {
       // Ignore teardown failures during session shutdown.
     }

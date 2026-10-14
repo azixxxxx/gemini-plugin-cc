@@ -6,7 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { getGeminiAvailability } from "./lib/gemini.mjs";
+import { getAgyAvailability } from "./lib/agy.mjs";
 import { collectReviewContext } from "./lib/git.mjs";
 import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
 import { getConfig, listJobs, PLUGIN_DATA_ENV } from "./lib/state.mjs";
@@ -76,7 +76,7 @@ function buildStopReviewPrompt(cwd, input = {}) {
 }
 
 function buildSetupNote(cwd) {
-  const availability = getGeminiAvailability(cwd);
+  const availability = getAgyAvailability(cwd);
   if (availability.available) {
     return null;
   }

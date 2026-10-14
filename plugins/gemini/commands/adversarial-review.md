@@ -1,12 +1,12 @@
 ---
 description: Run a Gemini review that challenges the implementation approach and design choices
-argument-hint: '[--wait|--background] [--base <ref>] [--scope auto|working-tree|branch] [--model <model>] [focus ...]'
+argument-hint: '[--wait|--background] [--base <ref>] [--scope auto|working-tree|branch] [--model <agy-model|pro|flash>] [--effort <low|medium|high|xhigh|max>] [focus ...]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
 ---
 
 Run an adversarial Gemini review through the shared plugin runtime.
-Gemini runs read-only: the plugin's admin policy disables edits and shell commands for the run.
+Gemini runs read-only: the plugin starts agy without `--dangerously-skip-permissions`, so headless agy denies file edits and shell commands for the run.
 Position it as a challenge review that questions the chosen implementation, design choices, tradeoffs, and assumptions.
 It is not just a stricter pass over implementation defects.
 

@@ -36,8 +36,9 @@ When to add blocks:
 - Write-capable tasks: add `action_safety` so Gemini stays narrow, avoids unrelated refactors, and leaves changes uncommitted.
 
 Effort and model choice:
-- Gemini CLI has no reasoning-effort flag. For a hard problem, add "Think very hard before answering." to the task, or suggest `--model pro` when the user asked for more capability.
-- For quick, simple jobs the user can pick `--model flash` or `--model flash-lite`. Leave the model unset otherwise; `auto` routing is Gemini CLI's default.
+- Effort is a runtime flag, not prompt text: `--effort low|medium|high|xhigh|max`. Pass it only when the user asked for it. Each model supports only some efforts; Gemini 3.8 Flash accepts `low`, `medium`, and `high`.
+- For a hard problem without an effort request, add "Think very hard before answering." to the task text.
+- `--model flash` and `--model pro` pick the first matching model in `agy models`. Leave the model unset otherwise; agy then uses its own default model.
 
 How to choose prompt shape:
 - Use the built-in `review` or `adversarial-review` commands when the job is reviewing local git changes. Those prompts already carry the review contract and the diff.

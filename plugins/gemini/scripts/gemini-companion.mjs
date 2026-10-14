@@ -8,23 +8,35 @@ import { fileURLToPath } from "node:url";
 
 import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
 import {
+  AGY_INSTALL_HINT,
+  AGY_LOGIN_HINT,
+  agySettingsPath,
   DEFAULT_CONTINUE_PROMPT,
   describeSandbox,
-  detectSystemAdminPolicies,
-  ensureGeminiAvailable,
-  GEMINI_INSTALL_COMMAND,
-  GEMINI_LOGIN_HINT,
-  getGeminiAuthStatus,
-  getGeminiAvailability,
+  ensureAgyAvailable,
+  findRiskyAllowRules,
+  getAgyAuthStatus,
+  getAgyAvailability,
+  listAgyModels,
   parseStructuredOutput,
   readOutputSchema,
-  REVIEW_DIFF_BUDGET_BYTES,
-  runGeminiTurn,
-  SANDBOX_REVIEW_DIFF_BUDGET_BYTES,
-  terminateGeminiProcessTree
-} from "./lib/gemini.mjs";
+  resolveModelAlias,
+  runAgyTurn,
+  terminateAgyProcessTree,
+  VALID_EFFORTS,
+  WRITE_TASK_CONSTRAINTS
+} from "./lib/agy.mjs";
+import { describeGuard } from "./lib/agy-guard.mjs";
 import { readStdinIfPiped } from "./lib/fs.mjs";
-import { collectReviewContext, ensureGitRepository, resolveReviewTarget } from "./lib/git.mjs";
+import {
+  collectReviewContext,
+  describeWorkingTreeChanges,
+  ensureGitRepository,
+  formatFileListing,
+  listRepositoryFiles,
+  resolveReviewTarget,
+  snapshotWorkingTree
+} from "./lib/git.mjs";
 import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
 import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
 import {
@@ -75,9 +87,9 @@ function printUsage() {
     [
       "Usage:",
       "  node scripts/gemini-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--enable-sandbox|--disable-sandbox] [--json]",
-      "  node scripts/gemini-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [--model <model>]",
-      "  node scripts/gemini-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [--model <model>] [focus text]",
-      "  node scripts/gemini-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model>] [prompt]",
+      "  node scripts/gemini-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [--model <model|pro|flash>] [--effort <low|medium|high|xhigh|max>]",
+      "  node scripts/gemini-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [--model <model|pro|flash>] [--effort <level>] [focus text]",
+      "  node scripts/gemini-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model|pro|flash>] [--effort <low|medium|high|xhigh|max>] [prompt]",
       "  node scripts/gemini-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/gemini-companion.mjs result [job-id] [--json]",
       "  node scripts/gemini-companion.mjs cancel [job-id] [--json]"
@@ -97,21 +109,56 @@ function outputCommandResult(payload, rendered, asJson) {
   outputResult(asJson ? payload : rendered, asJson);
 }
 
-function normalizeRequestedModel(model) {
-  if (model == null) {
+function normalizeRequestedModel(cwd, model) {
+  if (model == null || !String(model).trim()) {
     return null;
   }
   const normalized = String(model).trim();
-  return normalized || null;
+  if (normalized.toLowerCase() !== "pro" && normalized.toLowerCase() !== "flash") {
+    return normalized;
+  }
+  return resolveModelAlias(normalized, listAgyModels(cwd));
 }
 
-function rejectReasoningEffort(effort) {
+function normalizeReasoningEffort(effort) {
   if (effort == null || !String(effort).trim()) {
-    return;
+    return null;
   }
-  throw new Error(
-    "Gemini CLI has no reasoning-effort flag, so `--effort` is not supported. Remove it, or pick a model such as `--model pro` or `--model flash`."
-  );
+  const normalized = String(effort).trim().toLowerCase();
+  if (!VALID_EFFORTS.includes(normalized)) {
+    throw new Error(`Unsupported reasoning effort "${effort}". Use one of: ${VALID_EFFORTS.join(", ")}.`);
+  }
+  return normalized;
+}
+
+/**
+ * Puts the read-only limits and the repository's files in front of a task prompt. agy's model
+ * cannot list folders or search, and without the list it guesses file names.
+ */
+function buildReadOnlyTaskPrompt(workspaceRoot, prompt) {
+  const listing = formatFileListing(listRepositoryFiles(workspaceRoot));
+  return [
+    "<read_only_run>",
+    `This run is read-only. You can read files inside ${workspaceRoot} with view_file. You cannot list folders, search file contents, run shell commands, edit files, use the web, or start subagents.`,
+    ...(listing ? ["", "Files in the repository:", listing] : []),
+    "</read_only_run>",
+    "",
+    prompt
+  ].join("\n");
+}
+
+/** Runs a read-only Gemini job and reports files that changed while it was active. */
+async function runReadOnlyGuarded(cwd, run) {
+  const before = snapshotWorkingTree(cwd);
+  const result = await run();
+  const changes = describeWorkingTreeChanges(before, snapshotWorkingTree(cwd));
+  if (changes) {
+    result.warnings = [
+      ...(result.warnings ?? []),
+      `Files changed while this read-only Gemini run was active: ${changes.paths.join(", ")}${changes.headMoved ? " (HEAD moved)" : ""}. The plugin blocks edits in read-only runs, so another process most likely changed them; Gemini's answer may not match the current files. If nothing else was running, check the allow rules and hooks in ${path.dirname(agySettingsPath())}.`
+    ];
+  }
+  return result;
 }
 
 function normalizeArgv(argv) {
@@ -173,43 +220,37 @@ function firstMeaningfulLine(text, fallback) {
 async function buildSetupReport(cwd, actionsTaken = []) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   const nodeStatus = binaryAvailable("node", ["--version"], { cwd });
-  const npmStatus = binaryAvailable("npm", ["--version"], { cwd });
-  const geminiStatus = getGeminiAvailability(cwd, { refresh: true });
+  const agyStatus = getAgyAvailability(cwd, { refresh: true });
   const config = getConfig(workspaceRoot);
   const sandbox = describeSandbox(config);
-  const authStatus = await getGeminiAuthStatus(cwd, { sandbox: sandbox.enabled });
-  const systemPolicies = detectSystemAdminPolicies();
+  const guard = describeGuard();
+  const authStatus = await getAgyAuthStatus(cwd);
 
   const warnings = [];
-  if (systemPolicies.present) {
+  const riskyRules = guard.enabled ? [] : findRiskyAllowRules();
+  if (riskyRules.length > 0) {
     warnings.push(
-      `System Gemini admin policies exist in ${systemPolicies.directory}. Gemini ignores the plugin's --admin-policy guard while they exist, so those system policies decide which tools read-only runs may use.`
+      `${agySettingsPath()} allows ${riskyRules.join(", ")} without asking. Without the plugin's tool guard, headless agy applies these rules to read-only runs too, so reviews may edit files or run commands they cover; the plugin reports any file it sees changing.`
     );
   }
 
   const nextSteps = [];
-  if (!geminiStatus.available) {
-    nextSteps.push(
-      geminiStatus.tooOld
-        ? `Update Gemini CLI with \`${GEMINI_INSTALL_COMMAND}\`.`
-        : `Install Gemini CLI with \`${GEMINI_INSTALL_COMMAND}\`.`
-    );
-  } else if (authStatus.probeErrorKind === "sandbox") {
-    nextSteps.push("Gemini's sandbox failed to start here. Run `/gemini:setup --disable-sandbox` to run this repository without it.");
+  if (!agyStatus.available) {
+    nextSteps.push(agyStatus.tooOld ? "Update the Antigravity CLI with `agy update`." : AGY_INSTALL_HINT);
   } else if (!authStatus.loggedIn) {
-    nextSteps.push(GEMINI_LOGIN_HINT);
+    nextSteps.push(authStatus.hint ?? AGY_LOGIN_HINT);
   }
   if (!config.stopReviewGate) {
     nextSteps.push("Optional: run `/gemini:setup --enable-review-gate` to require a fresh Gemini review before stop.");
   }
 
   return {
-    ready: nodeStatus.available && geminiStatus.available && authStatus.loggedIn,
+    ready: nodeStatus.available && agyStatus.available && authStatus.loggedIn,
     node: nodeStatus,
-    npm: npmStatus,
-    gemini: geminiStatus,
+    agy: agyStatus,
     auth: authStatus,
     sandbox,
+    guard,
     reviewGateEnabled: Boolean(config.stopReviewGate),
     warnings,
     actionsTaken,
@@ -338,7 +379,7 @@ function resolveLatestTrackedTaskSession(cwd, options = {}) {
 }
 
 async function executeReviewRun(request) {
-  ensureGeminiAvailable(request.cwd);
+  ensureAgyAvailable(request.cwd);
   ensureGitRepository(request.cwd);
 
   const target = resolveReviewTarget(request.cwd, {
@@ -351,18 +392,20 @@ async function executeReviewRun(request) {
     validateNativeReviewRequest(target, focusText);
   }
 
-  const context = collectReviewContext(request.cwd, target, {
-    maxInlineDiffBytes: request.sandbox ? SANDBOX_REVIEW_DIFF_BUDGET_BYTES : REVIEW_DIFF_BUDGET_BYTES
-  });
+  const context = collectReviewContext(request.cwd, target);
   const prompt = buildReviewPrompt(reviewName === "Review" ? "review" : "adversarial-review", context, focusText);
-  const result = await runGeminiTurn(context.repoRoot, {
-    prompt,
-    model: request.model,
-    write: false,
-    sandbox: request.sandbox,
-    onProgress: request.onProgress
-  });
+  const result = await runReadOnlyGuarded(context.repoRoot, () =>
+    runAgyTurn(context.repoRoot, {
+      prompt,
+      model: request.model,
+      effort: request.effort,
+      write: false,
+      jsonSchemaPath: REVIEW_SCHEMA,
+      onProgress: request.onProgress
+    })
+  );
   const parsed = parseStructuredOutput(result.finalMessage, {
+    structuredOutput: result.status === 0 ? result.structuredOutput : null,
     status: result.status,
     failureMessage: result.error?.message ?? result.stderr
   });
@@ -383,6 +426,8 @@ async function executeReviewRun(request) {
       model: result.model,
       stderr: result.stderr,
       stdout: result.finalMessage,
+      deniedActions: result.deniedActions,
+      blockedToolCalls: result.blockedToolCalls,
       warnings: result.warnings,
       error: result.error
     },
@@ -411,43 +456,41 @@ async function executeReviewRun(request) {
 
 async function executeTaskRun(request) {
   const workspaceRoot = resolveWorkspaceRoot(request.cwd);
-  ensureGeminiAvailable(request.cwd);
+  ensureAgyAvailable(request.cwd);
 
   const taskMetadata = buildTaskRunMetadata({
     prompt: request.prompt,
     resumeLast: request.resumeLast
   });
 
-  let resumeSessionId = null;
-  let sandbox = Boolean(request.sandbox);
+  let resumeConversationId = null;
   if (request.resumeLast) {
     const latestTask = resolveLatestTrackedTaskSession(workspaceRoot, {
       excludeJobId: request.jobId
     });
     if (!latestTask) {
-      throw new Error("No previous Gemini task session was found for this repository.");
+      throw new Error("No previous Gemini task conversation was found for this repository.");
     }
-    resumeSessionId = latestTask.threadId;
-    // Gemini keeps sandboxed and unsandboxed sessions in different stores, so a resumed
-    // session must run in the same mode as the run that created it.
-    if (typeof latestTask.sandboxed === "boolean") {
-      sandbox = latestTask.sandboxed;
-    }
+    resumeConversationId = latestTask.threadId;
   }
 
-  if (!request.prompt && !resumeSessionId) {
+  if (!request.prompt && !resumeConversationId) {
     throw new Error("Provide a prompt, a prompt file, piped stdin, or use --resume-last.");
   }
 
-  const result = await runGeminiTurn(workspaceRoot, {
-    resumeSessionId,
-    prompt: request.prompt,
-    defaultPrompt: resumeSessionId ? DEFAULT_CONTINUE_PROMPT : "",
-    model: request.model,
-    write: Boolean(request.write),
-    sandbox,
-    onProgress: request.onProgress
-  });
+  const write = Boolean(request.write);
+  const basePrompt = String(request.prompt ?? "").trim() || (resumeConversationId ? DEFAULT_CONTINUE_PROMPT : "");
+  const run = () =>
+    runAgyTurn(workspaceRoot, {
+      resumeConversationId,
+      prompt: write ? `${basePrompt}\n\n${WRITE_TASK_CONSTRAINTS}` : buildReadOnlyTaskPrompt(workspaceRoot, basePrompt),
+      model: request.model,
+      effort: request.effort,
+      write,
+      sandbox: Boolean(request.sandbox),
+      onProgress: request.onProgress
+    });
+  const result = write ? await run() : await runReadOnlyGuarded(workspaceRoot, run);
 
   const rawOutput = typeof result.finalMessage === "string" ? result.finalMessage : "";
   const failureMessage = result.status === 0 ? "" : result.error?.message ?? result.stderr ?? "";
@@ -459,7 +502,8 @@ async function executeTaskRun(request) {
     {
       title: taskMetadata.title,
       jobId: request.jobId ?? null,
-      write: Boolean(request.write)
+      write,
+      warnings: result.warnings
     }
   );
   const payload = {
@@ -469,6 +513,8 @@ async function executeTaskRun(request) {
     model: result.model,
     rawOutput,
     touchedFiles: result.touchedFiles,
+    deniedActions: result.deniedActions,
+    blockedToolCalls: result.blockedToolCalls,
     warnings: result.warnings,
     error: result.error
   };
@@ -558,10 +604,11 @@ function buildTaskJob(workspaceRoot, taskMetadata, write) {
   });
 }
 
-function buildTaskRequest({ cwd, model, prompt, write, sandbox, resumeLast, jobId }) {
+function buildTaskRequest({ cwd, model, effort, prompt, write, sandbox, resumeLast, jobId }) {
   return {
     cwd,
     model,
+    effort,
     prompt,
     write,
     sandbox,
@@ -641,7 +688,7 @@ function enqueueBackgroundTask(cwd, job, request) {
 
 async function handleReviewCommand(argv, config) {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ["base", "scope", "model", "cwd"],
+    valueOptions: ["base", "scope", "model", "effort", "cwd"],
     booleanOptions: ["json", "background", "wait"],
     aliasMap: {
       m: "model"
@@ -651,12 +698,14 @@ async function handleReviewCommand(argv, config) {
   const cwd = resolveCommandCwd(options);
   const workspaceRoot = resolveCommandWorkspace(options);
   const focusText = positionals.join(" ").trim();
+  const effort = normalizeReasoningEffort(options.effort);
   const target = resolveReviewTarget(cwd, {
     base: options.base,
     scope: options.scope
   });
 
   config.validateRequest?.(target, focusText);
+  const model = normalizeRequestedModel(cwd, options.model);
   const metadata = buildReviewJobMetadata(config.reviewName, target);
   const job = createCompanionJob({
     prefix: "review",
@@ -673,8 +722,8 @@ async function handleReviewCommand(argv, config) {
         cwd,
         base: options.base,
         scope: options.scope,
-        model: normalizeRequestedModel(options.model),
-        sandbox: resolveSandbox(workspaceRoot),
+        model,
+        effort,
         focusText,
         reviewName: config.reviewName,
         onProgress: progress
@@ -699,10 +748,10 @@ async function handleTask(argv) {
     }
   });
 
-  rejectReasoningEffort(options.effort);
+  const effort = normalizeReasoningEffort(options.effort);
   const cwd = resolveCommandCwd(options);
   const workspaceRoot = resolveCommandWorkspace(options);
-  const model = normalizeRequestedModel(options.model);
+  const model = normalizeRequestedModel(cwd, options.model);
   const prompt = readTaskPrompt(cwd, options, positionals);
 
   const resumeLast = Boolean(options["resume-last"] || options.resume);
@@ -718,13 +767,14 @@ async function handleTask(argv) {
   });
 
   if (options.background) {
-    ensureGeminiAvailable(cwd);
+    ensureAgyAvailable(cwd);
     requireTaskRequest(prompt, resumeLast);
 
     const job = buildTaskJob(workspaceRoot, taskMetadata, write);
     const request = buildTaskRequest({
       cwd,
       model,
+      effort,
       prompt,
       write,
       sandbox,
@@ -743,6 +793,7 @@ async function handleTask(argv) {
       executeTaskRun({
         cwd,
         model,
+        effort,
         prompt,
         write,
         sandbox,
@@ -893,7 +944,7 @@ async function handleCancel(argv) {
   // the Gemini process group is gone even if the companion never got to forward the signal.
   terminateProcessTree(job.pid ?? Number.NaN);
   const geminiPid = Number(existing.geminiPid ?? job.geminiPid ?? Number.NaN);
-  const geminiStop = terminateGeminiProcessTree(geminiPid);
+  const geminiStop = terminateAgyProcessTree(geminiPid);
   if (geminiStop.attempted) {
     appendLogLine(
       job.logFile,
