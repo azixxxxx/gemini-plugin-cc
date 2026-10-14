@@ -1,52 +1,64 @@
 # Gemini plugin for Claude Code
 
-Use Gemini from inside Claude Code for code reviews or to delegate tasks to Gemini. The plugin drives Google's Antigravity CLI (`agy`), which ships with the Gemini desktop app.
+[![CI](https://github.com/azixxxxx/gemini-plugin-cc/actions/workflows/ci.yml/badge.svg)](https://github.com/azixxxxx/gemini-plugin-cc/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/azixxxxx/gemini-plugin-cc?sort=semver)](https://github.com/azixxxxx/gemini-plugin-cc/releases)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-d97757.svg)](https://code.claude.com/docs/en/plugins)
 
-This is a fork of [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc) v1.0.6. It keeps the commands, the background job model, and the review gate of the Codex plugin, and replaces the Codex app-server runtime with headless `agy` runs.
+**Use Google Gemini inside Claude Code.** This plugin adds `/gemini:review`, `/gemini:adversarial-review`, and `/gemini:rescue` to [Claude Code](https://code.claude.com/docs/en/overview), so Claude can get a second-opinion code review from Gemini, or hand Gemini a bug to investigate or fix, while you keep working. Gemini runs through Google's [Antigravity CLI](https://antigravity.google/download) (`agy`), which works with personal Google accounts.
 
-Version 0.1.0 drove Gemini CLI. Gemini CLI stopped accepting personal Google accounts in June 2026 (sign-in fails with `IneligibleTierError`), so 0.2.0 switched to `agy`, which still accepts them.
+It is a fork of [**openai/codex-plugin-cc**](https://github.com/openai/codex-plugin-cc), OpenAI's official plugin for using Codex from Claude Code. The commands, the background job model, and the stop-time review gate come from OpenAI's plugin; the runtime underneath is rebuilt for Gemini.
 
-## What You Get
+> [!NOTE]
+> This is an unofficial community project. It is not affiliated with or endorsed by Google, Anthropic, or OpenAI. Product names are trademarks of their owners.
 
-- `/gemini:review` for a read-only Gemini code review
-- `/gemini:adversarial-review` for a steerable challenge review
-- `/gemini:rescue`, `/gemini:status`, `/gemini:result`, and `/gemini:cancel` to delegate work and manage background jobs
-- `/gemini:setup` to check the installation, the sign-in, the sandbox, and the optional review gate
+## Features
 
-## Requirements
+| Command | What it does |
+| --- | --- |
+| `/gemini:review` | Read-only Gemini code review of your uncommitted changes or your branch, with findings ordered by severity |
+| `/gemini:adversarial-review` | Steerable review that challenges the design, the assumptions, and the failure modes of a change |
+| `/gemini:rescue` | Hands an investigation or a fix to Gemini through the `gemini:gemini-rescue` subagent |
+| `/gemini:status`, `/gemini:result`, `/gemini:cancel` | Track, read, and stop background Gemini jobs |
+| `/gemini:setup` | Checks agy, the sign-in, the sandbox, and the tool guard, and toggles the optional review gate |
 
-- **The Antigravity CLI `agy`.** Google's Gemini desktop app bundles it, on macOS at `/Applications/Gemini.app/Contents/Helpers/agy`. The plugin finds `agy` on your `PATH`, in the app bundle, or at the path in `GEMINI_COMPANION_AGY_PATH`. Run `agy install` once if you want `agy` on your `PATH`. Tested with agy 1.3.5.
-- **An agy sign-in** with a Google account that can use Antigravity. Usage counts against the quota of that account.
-- **Node.js 18.18 or later**
-- macOS is the tested platform. Linux should work. Windows is untested, and the plugin's tool guard is off there.
+Why use it:
 
-## Install
+- **A second opinion from another model family**, without leaving Claude Code or copying diffs around.
+- **Enforced read-only reviews.** A per-run tool guard limits reviews to reading files in your repository; it is not just an instruction in the prompt.
+- **Safe delegation.** Gemini can edit files in your working tree, but the guard blocks `git commit`, `git push`, and edits outside the repository.
+- **Background jobs** with status, results, cancel, and resume, the same workflow as OpenAI's Codex plugin.
+- **An optional review gate** that has Gemini review Claude's last turn before Claude Code stops.
 
-Add the marketplace in Claude Code:
+## Quick start
+
+1. Install the Antigravity CLI. Google's [Gemini desktop app](https://gemini.google/desktop/) bundles it (on macOS at `/Applications/Gemini.app/Contents/Helpers/agy`), or install it on its own from [antigravity.google/download](https://antigravity.google/download).
+2. Sign in once: run `agy` in a terminal, type `/login`, finish the sign-in in the browser, and quit with Ctrl+C twice.
+3. In Claude Code, add the marketplace, install the plugin, and check the setup:
 
 ```bash
 /plugin marketplace add azixxxxx/gemini-plugin-cc
-```
-
-To work from a local clone instead, pass its path: `/plugin marketplace add /path/to/gemini-plugin-cc`.
-
-Install the plugin:
-
-```bash
 /plugin install gemini@gemini-cc
-```
-
-Reload plugins:
-
-```bash
 /reload-plugins
-```
-
-Then run:
-
-```bash
 /gemini:setup
 ```
+
+4. Ask Gemini for a review of your current changes:
+
+```bash
+/gemini:review
+```
+
+## Requirements
+
+- **The Antigravity CLI `agy`.** The plugin looks for it on your `PATH`, in the Gemini app bundle, and in `~/.local/bin`, where the standalone installer puts it. Set `GEMINI_COMPANION_AGY_PATH` to use another binary. Tested with agy 1.3.5.
+- **An agy sign-in** with a Google account that can use Antigravity. Usage counts against the quota of that account.
+- **Node.js 18.18 or later.** CI runs the tests on Node.js 18.18, 20, 22, 24, and 26.
+- macOS is the tested platform. The test suite also runs on Linux in CI, but real agy runs on Linux are not verified yet. Windows is untested, and the plugin's tool guard is off there.
+
+## Install
+
+The Quick start covers the usual install. To work from a local clone instead, pass its path: `/plugin marketplace add /path/to/gemini-plugin-cc`.
 
 `/gemini:setup` checks Node.js, the agy version and the flags the plugin needs, and whether Gemini answers, by sending one tiny read-only prompt.
 
@@ -54,7 +66,7 @@ If agy is installed but not signed in, open a terminal, run `agy`, type `/login`
 
 After install, you should see:
 
-- the slash commands listed below
+- the slash commands listed above
 - the `gemini:gemini-rescue` subagent in `/agents`
 
 One simple first run is:
@@ -227,6 +239,15 @@ Then check in with:
 
 Every job is one headless agy process: `agy --input-format stream-json --output-format stream-json`. The prompt goes to stdin as a stream-json message, and the plugin parses the event stream for progress, the conversation ID, tool calls, and the final answer. Reviews pass the plugin's review schema with `--json-schema`, so agy returns the review as structured output.
 
+```mermaid
+flowchart LR
+  CC["Claude Code"] -->|"/gemini:review, /gemini:rescue"| CO["gemini-companion.mjs"]
+  CO -->|"prompt as stream-json on stdin"| AGY["agy (Antigravity CLI)"]
+  AGY -->|"before every tool call"| G["plugin tool guard"]
+  AGY <-->|"model calls"| GM["Gemini"]
+  CO --> JS["job store: status, result, cancel"]
+```
+
 agy runs in its own process group led by a small runner, [`scripts/agy-runner.mjs`](plugins/gemini/scripts/agy-runner.mjs). `/gemini:cancel` stops the whole group and escalates to `SIGKILL` if agy ignores `SIGTERM`. The runner also stops agy on its own when the job that started it dies, for example when Claude Code kills a Bash task, so a write-capable run never keeps editing unsupervised.
 
 ### Tool guard
@@ -269,15 +290,51 @@ Gemini's own file tools are not sandboxed; the tool guard limits where they writ
 
 Read-only runs do not pass `--sandbox`, because they cannot run commands.
 
-## Differences From The Codex Plugin
+## Compared With OpenAI's codex-plugin-cc
+
+| | [codex-plugin-cc](https://github.com/openai/codex-plugin-cc) (OpenAI) | gemini-plugin-cc (this fork) |
+| --- | --- | --- |
+| Model | Codex | Gemini, or another model `agy models` lists for your account |
+| Runtime | Codex app-server and broker | one headless `agy` process per job |
+| Reviews | Codex's built-in reviewer | the plugin's review prompt with agy's `--json-schema`, same JSON review schema |
+| Read-only limits | Codex sandbox policy | plugin tool guard plus agy's headless permission checks |
+| Write-capable runs | Codex workspace-write sandbox | `--dangerously-skip-permissions`, the tool guard, and agy's `--sandbox` |
+| Session transfer | `/codex:transfer` | not available |
 
 - There is no `/gemini:transfer`.
-- `/gemini:review` uses the plugin's own review prompt with agy's `--json-schema`, because agy has no built-in reviewer. Both reviews return the same JSON review schema as the Codex plugin.
 - There is no shared app-server or broker. Each job starts its own agy process.
-- Read-only and write limits come from the plugin's tool guard and agy's sandbox instead of Codex's sandbox policies.
 - `/gemini:setup` verifies the sign-in with one tiny prompt, because a cached sign-in can expire or be rejected for the account's location without any local sign of it.
 
 ## FAQ
+
+### How do I use Gemini in Claude Code?
+
+Install the Antigravity CLI and sign in with `agy` and `/login`, then install this plugin in Claude Code with `/plugin marketplace add azixxxxx/gemini-plugin-cc` and `/plugin install gemini@gemini-cc`. Run `/gemini:review` for a review or `/gemini:rescue <task>` to hand Gemini a task. See [Quick start](#quick-start).
+
+### Does it work with a personal Google account?
+
+Yes, as long as Antigravity accepts the account and its location. The plugin is tested with a personal Google account on agy 1.3.5.
+
+### Why does it use the Antigravity CLI and not Gemini CLI?
+
+Version 0.1.0 used Gemini CLI. Since June 2026 Gemini CLI rejects personal Google accounts (sign-in fails with `IneligibleTierError`), so version 0.2.0 moved to the Antigravity CLI.
+
+### How is it different from OpenAI's codex-plugin-cc?
+
+It is a fork of it with the same commands and job workflow, but it calls Gemini through `agy` instead of Codex. See [Compared With OpenAI's codex-plugin-cc](#compared-with-openais-codex-plugin-cc).
+
+### Can Gemini change my files, commit, or push?
+
+Reviews and read-only tasks cannot change anything: the tool guard only lets Gemini view files inside the repository. `/gemini:rescue` runs are write-capable, so Gemini can edit files and run commands in your working tree, but the guard blocks `git commit`, `git push`, and edits outside the repository and temp folders. The commit and push check is a guardrail, not a security boundary; see [Tool guard](#tool-guard).
+
+### What does the plugin send to Google?
+
+The prompt the plugin builds, which for reviews includes the diff, the content of untracked files within the budget, and the repository's file list, plus the content of any files Gemini opens. agy sends it to Google's models under your account.
+
+### Which models can I use?
+
+Any model `agy models` lists for your account. `--model flash` and `--model pro` are shortcuts for the first matching Gemini model; other names go to agy unchanged. `--effort` sets the reasoning effort the model supports.
+
 
 ### Do I need a separate account for this plugin?
 
@@ -304,6 +361,11 @@ npm run build
 ```
 
 `npm test` uses a fake `agy` executable that speaks agy's stream-json protocol and runs the guard's hooks, and makes no network calls. `npm run build` type-checks the runtime scripts.
+
+## Credits
+
+- [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc) by OpenAI is the original plugin this project is forked from (v1.0.6), licensed under Apache-2.0. [NOTICE](NOTICE) lists what changed.
+- Gemini and the Antigravity CLI are Google products. Claude Code is Anthropic's.
 
 ## License
 

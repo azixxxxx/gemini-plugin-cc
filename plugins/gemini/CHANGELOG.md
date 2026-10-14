@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- CI runs on every push and pull request: the tests and the type check on Ubuntu with Node.js 18.18, 20, 22, 24, and 26 and on macOS with Node.js 24, plus `claude plugin validate --strict` for the marketplace and the plugin.
+- The plugin also finds `agy` in `~/.local/bin`, where the standalone installer from antigravity.google puts it, and `/gemini:setup` points to that installer when `agy` is missing.
+- A project page on GitHub Pages, an `llms.txt`, and a rewritten README with a quick start, a comparison with OpenAI's codex-plugin-cc, and a longer FAQ.
+- The plugin manifest and `package.json` list the homepage, repository, license, and keywords.
+
 ## 0.2.0
 
 - Gemini now runs through Google's Antigravity CLI (`agy`), which ships with the Gemini desktop app, instead of Gemini CLI, which stopped accepting personal Google accounts in June 2026.

@@ -1,9 +1,28 @@
 {
   "name": "gemini-plugin-cc",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "Use Gemini from Claude Code through the Antigravity CLI to review code or delegate tasks.",
+  "keywords": [
+    "claude-code",
+    "claude-code-plugin",
+    "gemini",
+    "google-gemini",
+    "antigravity",
+    "agy",
+    "code-review",
+    "ai-code-review",
+    "codex-plugin-cc"
+  ],
+  "homepage": "https://azixxxxx.github.io/gemini-plugin-cc/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/azixxxxx/gemini-plugin-cc.git"
+  },
+  "bugs": {
+    "url": "https://github.com/azixxxxx/gemini-plugin-cc/issues"
+  },
   "license": "Apache-2.0",
   "engines": {
     "node": ">=18.18.0"

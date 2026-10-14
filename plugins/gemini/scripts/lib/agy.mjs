@@ -36,13 +36,16 @@ const PLUGIN_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)
 const RUNNER_SCRIPT = path.join(PLUGIN_ROOT, "scripts", "agy-runner.mjs");
 
 export const AGY_PATH_ENV = "GEMINI_COMPANION_AGY_PATH";
+// Where agy lives when it is not on the PATH: the Gemini app bundle, or ~/.local/bin, where the
+// standalone installer from antigravity.google puts it.
 export const AGY_APP_PATHS = [
   "/Applications/Gemini.app/Contents/Helpers/agy",
   "/Applications/Antigravity.app/Contents/Helpers/agy",
-  path.join(os.homedir(), "Applications", "Gemini.app", "Contents", "Helpers", "agy")
+  path.join(os.homedir(), "Applications", "Gemini.app", "Contents", "Helpers", "agy"),
+  path.join(os.homedir(), ".local", "bin", "agy")
 ];
 export const AGY_INSTALL_HINT =
-  "Install Google's Gemini desktop app, which bundles the Antigravity CLI `agy` (on macOS at /Applications/Gemini.app/Contents/Helpers/agy). Run `agy install` once to put it on your PATH, or point GEMINI_COMPANION_AGY_PATH at the binary.";
+  "Install the Antigravity CLI `agy`: Google's Gemini desktop app bundles it (on macOS at /Applications/Gemini.app/Contents/Helpers/agy), or install it on its own from https://antigravity.google/download. If the plugin still cannot find it, point GEMINI_COMPANION_AGY_PATH at the binary.";
 export const AGY_LOGIN_HINT =
   "Open a terminal, run `agy`, type `/login`, and sign in with a personal Google account that can use Antigravity. Then quit with Ctrl+C twice.";
 export const DEFAULT_CONTINUE_PROMPT =

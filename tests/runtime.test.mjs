@@ -120,7 +120,7 @@ test("setup explains how to get agy when it is missing", () => {
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.ready, false);
   assert.equal(payload.agy.available, false);
-  assert.ok(payload.nextSteps.some((step) => /Gemini desktop app, which bundles the Antigravity CLI `agy`/.test(step)));
+  assert.ok(payload.nextSteps.some((step) => /Gemini desktop app bundles it .*antigravity\.google\/download/.test(step)));
   assert.equal(headlessInvocations(binDir).length, 0);
 });
 

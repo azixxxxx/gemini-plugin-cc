@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gemini plugin for Claude Code: Gemini code reviews and tasks</title>
+  <meta name="description" content="Use Google Gemini inside Claude Code: /gemini:review code reviews, adversarial reviews, and /gemini:rescue task delegation through the Antigravity CLI. Open-source fork of OpenAI's codex-plugin-cc.">
+  <link rel="canonical" href="https://azixxxxx.github.io/gemini-plugin-cc/">
+  <meta name="theme-color" content="#4f46e5">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="gemini-plugin-cc">
+  <meta property="og:title" content="Gemini plugin for Claude Code">
+  <meta property="og:description" content="Gemini code reviews and task delegation from inside Claude Code, through the Antigravity CLI. Fork of OpenAI's codex-plugin-cc.">
+  <meta property="og:url" content="https://azixxxxx.github.io/gemini-plugin-cc/">
+  <meta property="og:image" content="https://azixxxxx.github.io/gemini-plugin-cc/og-image.png">
+  <meta property="og:image:width" content="1280">
+  <meta property="og:image:height" content="640">
+  <meta property="og:image:alt" content="Gemini plugin for Claude Code: /gemini:review, /gemini:adversarial-review, /gemini:rescue">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%234f46e5'/%3E%3Cstop offset='1' stop-color='%230ea5e9'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Cpath d='M22 20 10 32l12 12M42 20l12 12-12 12' stroke='white' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="alternate" type="text/markdown" title="llms.txt" href="llms.txt">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareSourceCode",
+        "@id": "https://github.com/azixxxxx/gemini-plugin-cc",
+        "name": "Gemini plugin for Claude Code",
+        "alternateName": "gemini-plugin-cc",
+        "description": "Unofficial Claude Code plugin that runs Google Gemini through the Antigravity CLI (agy) for read-only code reviews, adversarial reviews, and task delegation from inside Claude Code. Fork of OpenAI's codex-plugin-cc.",
+        "url": "https://azixxxxx.github.io/gemini-plugin-cc/",
+        "codeRepository": "https://github.com/azixxxxx/gemini-plugin-cc",
+        "programmingLanguage": "JavaScript",
+        "runtimePlatform": "Node.js",
+        "license": "https://www.apache.org/licenses/LICENSE-2.0",
+        "isBasedOn": "https://github.com/openai/codex-plugin-cc",
+        "keywords": ["Claude Code", "Claude Code plugin", "Gemini", "Google Gemini", "Antigravity CLI", "agy", "code review", "AI code review", "codex-plugin-cc"],
+        "author": { "@type": "Person", "name": "azixxxxx", "url": "https://github.com/azixxxxx" }
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "How do I use Gemini in Claude Code?",
+            "acceptedAnswer": { "@type": "Answer", "text": "Install the Antigravity CLI and sign in with agy and /login, then run /plugin marketplace add azixxxxx/gemini-plugin-cc and /plugin install gemini@gemini-cc in Claude Code. Use /gemini:review for a code review or /gemini:rescue to hand Gemini a task." }
+          },
+          {
+            "@type": "Question",
+            "name": "Does the Gemini plugin for Claude Code work with a personal Google account?",
+            "acceptedAnswer": { "@type": "Answer", "text": "Yes, as long as Antigravity accepts the account and its location. The plugin is tested with a personal Google account on agy 1.3.5." }
+          },
+          {
+            "@type": "Question",
+            "name": "Why does it use the Antigravity CLI and not Gemini CLI?",
+            "acceptedAnswer": { "@type": "Answer", "text": "Since June 2026 Gemini CLI rejects personal Google accounts with IneligibleTierError. Version 0.1.0 of the plugin used Gemini CLI; version 0.2.0 moved to the Antigravity CLI (agy)." }
+          },
+          {
+            "@type": "Question",
+            "name": "How is it different from OpenAI's codex-plugin-cc?",
+            "acceptedAnswer": { "@type": "Answer", "text": "It is a fork of OpenAI's codex-plugin-cc with the same commands, background jobs, and review gate, but it calls Gemini through the Antigravity CLI instead of Codex." }
+          },
+          {
+            "@type": "Question",
+            "name": "Can Gemini change my files, commit, or push?",
+            "acceptedAnswer": { "@type": "Answer", "text": "Reviews and read-only tasks can only view files inside the repository. Rescue runs can edit files in the working tree, but the plugin's tool guard blocks git commit, git push, and edits outside the repository." }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --bg-soft: #f6f7fb;
+      --card: #ffffff;
+      --text: #111827;
+      --muted: #4b5563;
+      --border: #e5e7eb;
+      --accent: #4f46e5;
+      --accent-2: #0ea5e9;
+      --code-bg: #0f172a;
+      --code-text: #e2e8f0;
+      --shadow: 0 1px 2px rgba(17, 24, 39, 0.06), 0 8px 24px rgba(17, 24, 39, 0.06);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b1020;
+        --bg-soft: #0f1629;
+        --card: #111a30;
+        --text: #e5e7eb;
+        --muted: #a1a8b8;
+        --border: #1f2a44;
+        --accent: #8b8cf7;
+        --accent-2: #38bdf8;
+        --code-bg: #060a16;
+        --code-text: #e2e8f0;
+        --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+      }
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    a { color: var(--accent); }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    code { font-size: 0.92em; background: var(--bg-soft); border: 1px solid var(--border); border-radius: 6px; padding: 0.1em 0.35em; }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+    header.site {
+      position: sticky; top: 0; z-index: 10;
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      backdrop-filter: saturate(160%) blur(10px);
+      border-bottom: 1px solid var(--border);
+    }
+    header.site .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; gap: 16px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); text-decoration: none; }
+    .brand-mark { width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); display: grid; place-items: center; }
+    nav { display: flex; gap: 18px; flex-wrap: wrap; }
+    nav a { color: var(--muted); text-decoration: none; font-size: 15px; }
+    nav a:hover { color: var(--text); }
+    .hero { padding: 72px 0 40px; background: radial-gradient(1200px 400px at 50% -120px, color-mix(in srgb, var(--accent) 18%, transparent), transparent); }
+    .eyebrow { display: inline-block; font-size: 14px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; margin-bottom: 18px; background: var(--card); }
+    h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.08; margin: 0 0 18px; letter-spacing: -0.02em; }
+    h1 .grad { background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .lead { font-size: clamp(17px, 2.2vw, 20px); color: var(--muted); max-width: 760px; margin: 0 0 28px; }
+    .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 32px; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 10px; font-weight: 600; text-decoration: none; border: 1px solid var(--border); color: var(--text); background: var(--card); }
+    .btn.primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; border-color: transparent; }
+    .terminal { background: var(--code-bg); color: var(--code-text); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; max-width: 760px; }
+    .terminal .bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); font-size: 13px; color: #94a3b8; }
+    .terminal pre { margin: 0; padding: 16px 18px; overflow-x: auto; font-size: 14.5px; line-height: 1.7; }
+    .terminal .comment { color: #64748b; }
+    .copy { font: inherit; font-size: 12.5px; color: #cbd5e1; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 7px; padding: 3px 10px; cursor: pointer; }
+    section { padding: 56px 0; }
+    section.soft { background: var(--bg-soft); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    h2 { font-size: clamp(26px, 3.6vw, 34px); margin: 0 0 10px; letter-spacing: -0.01em; }
+    .section-lead { color: var(--muted); margin: 0 0 28px; max-width: 760px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: var(--shadow); }
+    .card h3 { margin: 0 0 8px; font-size: 18px; }
+    .card p { margin: 0; color: var(--muted); }
+    .card .cmd { display: inline-block; margin-bottom: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px; color: var(--accent); }
+    .flow { width: 100%; height: auto; display: block; }
+    .flow text { font: 600 15px ui-sans-serif, system-ui, sans-serif; fill: var(--text); }
+    .flow .sub { font-weight: 400; font-size: 12.5px; fill: var(--muted); }
+    .flow rect { fill: var(--card); stroke: var(--border); stroke-width: 1.5; }
+    .flow .hl { stroke: var(--accent); stroke-width: 2; }
+    .flow path { stroke: var(--muted); stroke-width: 2; fill: none; }
+    .flow .arrow { fill: var(--muted); stroke: none; }
+    ul.checks { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+    ul.checks li { padding-left: 30px; position: relative; color: var(--muted); }
+    ul.checks li::before { content: ""; position: absolute; left: 0; top: 0.35em; width: 18px; height: 18px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+    ul.checks strong { color: var(--text); }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 14px; background: var(--card); }
+    table { border-collapse: collapse; width: 100%; min-width: 640px; }
+    th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { font-size: 14px; color: var(--muted); font-weight: 600; }
+    tr:last-child td { border-bottom: 0; }
+    details { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; margin-bottom: 10px; }
+    summary { cursor: pointer; font-weight: 600; }
+    details p { color: var(--muted); margin: 10px 0 0; }
+    footer { padding: 36px 0 48px; color: var(--muted); font-size: 14.5px; border-top: 1px solid var(--border); }
+    footer p { margin: 6px 0; }
+    @media (max-width: 640px) {
+      nav a.hide-sm { display: none; }
+      .hero { padding-top: 48px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="#top" aria-label="gemini-plugin-cc home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 64 64"><path d="M22 20 10 32l12 12M42 20l12 12-12 12" stroke="white" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        gemini-plugin-cc
+      </a>
+      <nav aria-label="Sections">
+        <a href="#features" class="hide-sm">Features</a>
+        <a href="#how-it-works" class="hide-sm">How it works</a>
+        <a href="#faq">FAQ</a>
+        <a href="https://github.com/azixxxxx/gemini-plugin-cc">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <div class="hero">
+      <div class="wrap">
+        <span class="eyebrow">Open source &middot; Apache-2.0 &middot; fork of OpenAI's codex-plugin-cc</span>
+        <h1>Use <span class="grad">Google Gemini</span> inside Claude Code</h1>
+        <p class="lead">Get a second-opinion code review from Gemini, or hand Gemini a bug to investigate or fix, without leaving Claude Code. The plugin runs Gemini through Google's Antigravity CLI (<code>agy</code>), which works with personal Google accounts.</p>
+        <div class="actions">
+          <a class="btn primary" href="#install">Install in Claude Code</a>
+          <a class="btn" href="https://github.com/azixxxxx/gemini-plugin-cc">View on GitHub</a>
+        </div>
+        <div class="terminal" id="install">
+          <div class="bar"><span>Claude Code</span><button class="copy" type="button" data-copy="install-cmds">Copy</button></div>
+<pre id="install-cmds"><span class="comment"># 1. Install and sign in to the Antigravity CLI: run agy, then /login</span>
+/plugin marketplace add azixxxxx/gemini-plugin-cc
+/plugin install gemini@gemini-cc
+/reload-plugins
+/gemini:setup
+/gemini:review</pre>
+        </div>
+      </div>
+    </div>
+
+    <section id="features">
+      <div class="wrap">
+        <h2>What you get</h2>
+        <p class="section-lead">The same workflow as OpenAI's Codex plugin for Claude Code, with Gemini doing the work.</p>
+        <div class="grid">
+          <article class="card"><span class="cmd">/gemini:review</span><h3>Code review</h3><p>A read-only Gemini review of your uncommitted changes or your branch, with findings ordered by severity.</p></article>
+          <article class="card"><span class="cmd">/gemini:adversarial-review</span><h3>Adversarial review</h3><p>A steerable review that challenges the design, the assumptions, and the failure modes of a change.</p></article>
+          <article class="card"><span class="cmd">/gemini:rescue</span><h3>Task delegation</h3><p>Hand Gemini an investigation or a fix. It edits your working tree and leaves the changes uncommitted.</p></article>
+          <article class="card"><span class="cmd">/gemini:status &middot; result &middot; cancel</span><h3>Background jobs</h3><p>Run long reviews and tasks in the background, check on them, read the result, or stop them.</p></article>
+          <article class="card"><span class="cmd">/gemini:setup --enable-review-gate</span><h3>Review gate</h3><p>Optionally have Gemini review Claude's last turn before Claude Code stops, and block the stop on real issues.</p></article>
+          <article class="card"><span class="cmd">tool guard</span><h3>Enforced limits</h3><p>A per-run guard keeps reviews read-only and blocks <code>git commit</code>, <code>git push</code>, and edits outside the repository.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="how-it-works" class="soft">
+      <div class="wrap">
+        <h2>How it works</h2>
+        <p class="section-lead">Each job is one headless <code>agy</code> run. A hook the plugin writes for that run checks every tool call before agy executes it.</p>
+        <svg class="flow" viewBox="0 0 1000 220" role="img" aria-labelledby="flow-title">
+          <title id="flow-title">Claude Code calls the companion script, which runs agy; agy asks the plugin's tool guard before every tool call and talks to Gemini.</title>
+          <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="arrow" d="M0 0 10 5 0 10z"/></marker></defs>
+          <rect x="10" y="70" width="190" height="80" rx="12"/><text x="105" y="105" text-anchor="middle">Claude Code</text><text class="sub" x="105" y="127" text-anchor="middle">/gemini:review, /gemini:rescue</text>
+          <rect x="270" y="70" width="210" height="80" rx="12"/><text x="375" y="105" text-anchor="middle">Companion</text><text class="sub" x="375" y="127" text-anchor="middle">jobs, status, results</text>
+          <rect class="hl" x="550" y="70" width="190" height="80" rx="12"/><text x="645" y="105" text-anchor="middle">agy</text><text class="sub" x="645" y="127" text-anchor="middle">Antigravity CLI</text>
+          <rect x="810" y="70" width="180" height="80" rx="12"/><text x="900" y="105" text-anchor="middle">Gemini</text><text class="sub" x="900" y="127" text-anchor="middle">model</text>
+          <rect class="hl" x="550" y="176" width="190" height="40" rx="10"/><text class="sub" x="645" y="201" text-anchor="middle">plugin tool guard</text>
+          <path d="M200 110H262" marker-end="url(#arr)"/><path d="M480 110H542" marker-end="url(#arr)"/><path d="M740 110H802" marker-end="url(#arr)" marker-start="url(#arr)"/><path d="M645 150V170" marker-end="url(#arr)"/>
+        </svg>
+      </div>
+    </section>
+
+    <section id="safety">
+      <div class="wrap">
+        <h2>Safety model</h2>
+        <p class="section-lead">The limits are enforced at run time, not only described in the prompt.</p>
+        <ul class="checks">
+          <li><strong>Read-only reviews.</strong> Reviews and read-only tasks may only view files inside the repository. Shell commands, edits, web and MCP tools, and subagents are denied.</li>
+          <li><strong>No commits or pushes.</strong> Rescue runs can edit your working tree, but the guard blocks <code>git commit</code>, <code>git push</code>, edits outside the repository and temp folders, and edits inside <code>.git</code>.</li>
+          <li><strong>Sandboxed commands.</strong> On macOS and Linux, write-capable runs use agy's terminal sandbox, which keeps shell commands out of the repository and your home folder.</li>
+          <li><strong>Fails closed.</strong> If the guard cannot decide, it blocks the tool call.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="compare" class="soft">
+      <div class="wrap">
+        <h2>Compared with OpenAI's codex-plugin-cc</h2>
+        <p class="section-lead">This project is a fork of <a href="https://github.com/openai/codex-plugin-cc">openai/codex-plugin-cc</a>, OpenAI's official plugin for using Codex from Claude Code.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>codex-plugin-cc (OpenAI)</th><th>gemini-plugin-cc</th></tr></thead>
+            <tbody>
+              <tr><td>Model</td><td>Codex</td><td>Gemini, or another model <code>agy models</code> lists</td></tr>
+              <tr><td>Runtime</td><td>Codex app-server and broker</td><td>one headless <code>agy</code> process per job</td></tr>
+              <tr><td>Reviews</td><td>Codex's built-in reviewer</td><td>review prompt with agy's <code>--json-schema</code>, same review schema</td></tr>
+              <tr><td>Read-only limits</td><td>Codex sandbox policy</td><td>plugin tool guard and agy's headless permission checks</td></tr>
+              <tr><td>Commands</td><td>/codex:review, /codex:rescue, &hellip;</td><td>/gemini:review, /gemini:rescue, &hellip;</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="faq">
+      <div class="wrap">
+        <h2>FAQ</h2>
+        <details open><summary>How do I use Gemini in Claude Code?</summary><p>Install the Antigravity CLI (it ships with Google's Gemini desktop app, or install it from <a href="https://antigravity.google/download">antigravity.google/download</a>) and sign in with <code>agy</code> and <code>/login</code>. Then run <code>/plugin marketplace add azixxxxx/gemini-plugin-cc</code> and <code>/plugin install gemini@gemini-cc</code> in Claude Code, and use <code>/gemini:review</code> or <code>/gemini:rescue</code>.</p></details>
+        <details><summary>Does it work with a personal Google account?</summary><p>Yes, as long as Antigravity accepts the account and its location. The plugin is tested with a personal Google account on agy 1.3.5.</p></details>
+        <details><summary>Why the Antigravity CLI and not Gemini CLI?</summary><p>Since June 2026 Gemini CLI rejects personal Google accounts with <code>IneligibleTierError</code>. Version 0.1.0 used Gemini CLI; version 0.2.0 moved to the Antigravity CLI.</p></details>
+        <details><summary>How is it different from OpenAI's codex-plugin-cc?</summary><p>It is a fork with the same commands, background jobs, and review gate, but it calls Gemini through <code>agy</code> instead of Codex.</p></details>
+        <details><summary>Can Gemini change my files, commit, or push?</summary><p>Reviews cannot change anything. Rescue runs can edit your working tree, but the tool guard blocks <code>git commit</code>, <code>git push</code>, and edits outside the repository. The commit and push check is a guardrail, not a security boundary.</p></details>
+        <details><summary>What does the plugin send to Google?</summary><p>The prompt it builds (for reviews: the diff, untracked files within a budget, and the repository's file list) and the files Gemini opens. agy sends them to Google's models under your account.</p></details>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p>Forked from <a href="https://github.com/openai/codex-plugin-cc">openai/codex-plugin-cc</a> by OpenAI (Apache-2.0). Released under the <a href="https://github.com/azixxxxx/gemini-plugin-cc/blob/main/LICENSE">Apache License 2.0</a>.</p>
+      <p>Unofficial community project, not affiliated with or endorsed by Google, Anthropic, or OpenAI. Product names are trademarks of their owners.</p>
+      <p><a href="https://github.com/azixxxxx/gemini-plugin-cc">Source on GitHub</a> &middot; <a href="https://github.com/azixxxxx/gemini-plugin-cc/releases">Releases</a> &middot; <a href="llms.txt">llms.txt</a></p>
+    </div>
+  </footer>
+
+  <script>
+    document.querySelectorAll("button.copy").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const source = document.getElementById(button.dataset.copy);
+        const text = source.innerText.split("\n").filter((line) => !line.startsWith("#")).join("\n");
+        try {
+          await navigator.clipboard.writeText(text);
+          button.textContent = "Copied";
+        } catch {
+          button.textContent = "Select and copy";
+        }
+        setTimeout(() => { button.textContent = "Copy"; }, 1600);
+      });
+    });
+  </script>
+</body>
+</html>

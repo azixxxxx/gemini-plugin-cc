@@ -1,0 +1,23 @@
+# gemini-plugin-cc
+
+> Unofficial Claude Code plugin that lets Claude Code use Google Gemini through the Antigravity CLI (`agy`): read-only code reviews (`/gemini:review`), adversarial design reviews (`/gemini:adversarial-review`), and task delegation (`/gemini:rescue`), with background jobs and an optional stop-time review gate. Fork of OpenAI's codex-plugin-cc (Apache-2.0).
+
+Key facts:
+
+- Install in Claude Code: `/plugin marketplace add azixxxxx/gemini-plugin-cc`, then `/plugin install gemini@gemini-cc`, `/reload-plugins`, and `/gemini:setup`.
+- Requires the Antigravity CLI `agy`, bundled with Google's Gemini desktop app or installed from https://antigravity.google/download, signed in once with `agy` and `/login`, plus Node.js 18.18 or later.
+- Works with personal Google accounts. Gemini CLI stopped accepting them in June 2026, which is why the plugin uses agy.
+- A per-run tool guard (an agy PreToolUse hook) keeps reviews read-only and blocks `git commit`, `git push`, and edits outside the repository in write-capable runs.
+- Not affiliated with Google, Anthropic, or OpenAI.
+
+## Docs
+
+- [README](https://github.com/azixxxxx/gemini-plugin-cc/blob/main/README.md): install, commands, how it works, safety model, FAQ
+- [Changelog](https://github.com/azixxxxx/gemini-plugin-cc/blob/main/plugins/gemini/CHANGELOG.md): release history
+- [NOTICE](https://github.com/azixxxxx/gemini-plugin-cc/blob/main/NOTICE): what changed relative to openai/codex-plugin-cc
+
+## Optional
+
+- [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc): the original Codex plugin for Claude Code, by OpenAI
+- [Claude Code plugins](https://code.claude.com/docs/en/plugins): how Claude Code plugins work
+- [Antigravity CLI download](https://antigravity.google/download): install the CLI on macOS, Linux, or Windows
