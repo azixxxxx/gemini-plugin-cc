@@ -20,6 +20,11 @@ const isWindows = process.platform === "win32";
 const launcherPid = process.ppid;
 const guardDir = process.env[GUARD_DIR_ENV] ?? null;
 
+// After the companion dies, writes to its pipes fail with EPIPE; that must not crash the runner
+// before it has stopped agy.
+process.stdout.on("error", () => {});
+process.stderr.on("error", () => {});
+
 function removeGuard() {
   try {
     removeGuardDirectory(guardDir);
@@ -87,8 +92,12 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
 
 setInterval(() => {
   if (process.ppid !== launcherPid) {
-    process.stderr.write("The Gemini companion exited; stopping agy.\n");
     removeGuard();
     shutdown(128 + 9);
+    try {
+      process.stderr.write("The Gemini companion exited; stopping agy.\n");
+    } catch {
+      // stderr is a pipe to the companion that just died.
+    }
   }
 }, WATCHDOG_INTERVAL_MS).unref();

@@ -178,7 +178,10 @@ test("classifyRunError recognizes agy's failure modes", () => {
   assert.equal(auth.kind, "authentication");
   assert.match(auth.message, /type `\/login`/);
   assert.equal(classifyRunError({ exitCode: 1, result: { status: "ERROR", error: "403 PERMISSION_DENIED: API has not been used in project my" } }).kind, "account-config");
-  assert.equal(classifyRunError({ exitCode: 1, result: { status: "ERROR", error: "429 RESOURCE_EXHAUSTED" } }).kind, "quota");
+  const quota = classifyRunError({ exitCode: 1, result: { status: "ERROR", error: "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 165h42m31s." } });
+  assert.equal(quota.kind, "quota");
+  assert.match(quota.message, /Resets in 165h42m31s\. Pick another model from `agy models` with `--model`/);
+  assert.equal(classifyRunError({ exitCode: 1, guardNotLoaded: true, signal: "SIGTERM" }).kind, "guard-not-loaded");
   assert.equal(classifyRunError({ exitCode: 1, result: { status: "ERROR", error: "503 UNAVAILABLE: high demand" } }).kind, "capacity");
   const model = classifyRunError({
     exitCode: 1,
@@ -251,6 +254,7 @@ test("runAgyTurn sends the prompt as a stream-json message and runs inside the g
   assert.equal(result.status, 0, result.error?.message);
   assert.equal(result.sessionId, "conv-1");
   assert.equal(result.guarded, process.platform !== "win32");
+  assert.equal(result.guardLoaded, process.platform !== "win32" ? true : null);
   assert.equal(result.sandboxed, true);
   assert.match(result.finalMessage, /Fixed the bug in app\.js\./);
   assert.deepEqual(result.touchedFiles.map((file) => fs.realpathSync(file)), [fs.realpathSync(path.join(repo, "app.js"))]);
@@ -282,6 +286,20 @@ test("read-only runs keep going when the guard blocks a tool, and stop without i
   assert.equal(unguarded.status, 1);
   assert.equal(unguarded.error.kind, "read-only-denied");
   assert.deepEqual(readFakeAgyState(binDir).invocations.at(-1).addDirs, []);
+});
+
+test("runAgyTurn stops a run at the first tool call when agy did not load the guard", { skip: process.platform === "win32" }, async () => {
+  const { binDir, env } = setupFake("guard-ignored");
+  const started = Date.now();
+  const result = await runAgyTurn(makeTempDir(), { prompt: "push it", write: true, env, terminateGraceMs: 500 });
+
+  assert.equal(result.status, 1);
+  assert.equal(result.error.kind, "guard-not-loaded");
+  assert.match(result.error.message, /did not load the plugin's tool guard/);
+  assert.equal(result.guardLoaded, false);
+  assert.ok(Date.now() - started < 10000);
+  const fakePid = readFakeAgyState(binDir).invocations.at(-1).pid;
+  assert.throws(() => process.kill(fakePid, 0));
 });
 
 test("runAgyTurn reports an expired sign-in", async () => {

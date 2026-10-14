@@ -3,7 +3,14 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { collectReviewContext, formatFileListing, listRepositoryFiles, resolveReviewTarget } from "../plugins/gemini/scripts/lib/git.mjs";
+import {
+  collectReviewContext,
+  describeRefChanges,
+  formatFileListing,
+  listRepositoryFiles,
+  resolveReviewTarget,
+  snapshotRefs
+} from "../plugins/gemini/scripts/lib/git.mjs";
 import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
 
 test("resolveReviewTarget prefers working tree when repo is dirty", () => {
@@ -318,4 +325,25 @@ test("collectReviewContext ends with the repository file list", () => {
 
   assert.match(context.content, /## Repository Files\n\napp\.js\nlib\.js\n$/);
   assert.match(context.collectionGuidance, /cannot list folders, search file contents, run shell commands/);
+});
+
+test("describeRefChanges reports commits, branch moves, and remote-tracking updates", () => {
+  const cwd = makeTempDir();
+  initGitRepo(cwd);
+  fs.writeFileSync(path.join(cwd, "a.txt"), "a\n");
+  run("git", ["add", "a.txt"], { cwd });
+  run("git", ["commit", "-m", "init"], { cwd });
+
+  const before = snapshotRefs(cwd);
+  assert.equal(describeRefChanges(before, snapshotRefs(cwd)), null);
+
+  run("git", ["commit", "--allow-empty", "-m", "sneaky"], { cwd });
+  run("git", ["update-ref", "refs/remotes/origin/main", "HEAD"], { cwd });
+  const changes = describeRefChanges(before, snapshotRefs(cwd));
+
+  assert.equal(changes.headMoved, true);
+  assert.deepEqual(changes.localRefs, ["refs/heads/main"]);
+  assert.deepEqual(changes.remoteRefs, ["refs/remotes/origin/main"]);
+  assert.equal(snapshotRefs(makeTempDir()), null);
+  assert.equal(describeRefChanges(null, before), null);
 });

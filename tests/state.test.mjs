@@ -5,7 +5,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { makeTempDir } from "./helpers.mjs";
-import { resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState } from "../plugins/gemini/scripts/lib/state.mjs";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+import { loadState, resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState, writeFileAtomic } from "../plugins/gemini/scripts/lib/state.mjs";
+
+const STATE_MODULE = fileURLToPath(new URL("../plugins/gemini/scripts/lib/state.mjs", import.meta.url));
 
 // A Claude Code session with this plugin installed exports its data dir into every Bash call.
 delete process.env.GEMINI_COMPANION_PLUGIN_DATA;
@@ -112,4 +117,42 @@ test("saveState prunes dropped job artifacts when indexed jobs exceed the cap", 
       .flatMap((jobId) => [`${jobId}.json`, `${jobId}.log`])
       .sort()
   );
+});
+
+test("concurrent state updates from several processes do not drop each other's jobs", async () => {
+  const workspace = makeTempDir();
+  const writers = 8;
+  const jobsPerWriter = 5;
+  const script = `
+    const { upsertJob } = await import(${JSON.stringify(STATE_MODULE)});
+    for (let index = 0; index < ${jobsPerWriter}; index += 1) {
+      upsertJob(process.argv[1], { id: "job-" + process.argv[2] + "-" + index, status: "running" });
+    }
+  `;
+  const env = { ...process.env };
+  delete env.GEMINI_COMPANION_PLUGIN_DATA;
+  await Promise.all(
+    Array.from({ length: writers }, (_, writer) =>
+      new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, ["--input-type=module", "-e", script, workspace, String(writer)], { env, stdio: "ignore" });
+        child.once("error", reject);
+        child.once("exit", (code) => (code === 0 ? resolve() : reject(new Error(`writer exited with ${code}`))));
+      })
+    )
+  );
+
+  const ids = loadState(workspace).jobs.map((job) => job.id);
+  assert.equal(new Set(ids).size, writers * jobsPerWriter);
+  assert.equal(fs.existsSync(path.join(resolveStateDir(workspace), "state.lock")), false);
+});
+
+test("writeFileAtomic replaces the file and leaves no temporary files", () => {
+  const directory = makeTempDir();
+  const target = path.join(directory, "state.json");
+  fs.writeFileSync(target, "old\n");
+
+  writeFileAtomic(target, "new\n");
+
+  assert.equal(fs.readFileSync(target, "utf8"), "new\n");
+  assert.deepEqual(fs.readdirSync(directory), ["state.json"]);
 });

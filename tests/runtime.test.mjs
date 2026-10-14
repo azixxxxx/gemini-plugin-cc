@@ -104,10 +104,35 @@ test("setup reports ready when agy answers the sign-in check", () => {
   assert.equal(payload.auth.verified, true);
   assert.equal(payload.sandbox.enabled, SANDBOX_DEFAULT);
   assert.equal(payload.guard.enabled, GUARDED);
+  assert.equal(payload.guard.loaded, GUARDED ? true : null);
   assert.deepEqual(payload.warnings, []);
+  if (GUARDED) {
+    assert.match(companion(["setup"], { cwd: ROOT, env }).stdout, /- tool guard: on \(verified\)/);
+  }
   const probe = lastInvocation(binDir);
   assert.match(probe.prompt, /Reply with exactly the word OK/);
   assertReadOnly(probe);
+});
+
+test("setup flags an agy that does not load the tool guard", { skip: !GUARDED }, () => {
+  const { env } = setupFake("guard-ignored");
+
+  const payload = JSON.parse(companion(["setup", "--json"], { cwd: ROOT, env }).stdout);
+
+  assert.equal(payload.ready, false);
+  assert.equal(payload.auth.loggedIn, true);
+  assert.equal(payload.guard.loaded, false);
+  assert.ok(payload.warnings.some((warning) => /did not load the plugin's tool guard/.test(warning)));
+  assert.match(companion(["setup"], { cwd: ROOT, env }).stdout, /- tool guard: NOT LOADED by agy/);
+});
+
+test("setup warns about agy versions the plugin has not verified", () => {
+  const { env } = setupFake("newer-version");
+
+  const payload = JSON.parse(companion(["setup", "--json"], { cwd: ROOT, env }).stdout);
+
+  assert.equal(payload.ready, true);
+  assert.ok(payload.warnings.some((warning) => /agy 1\.4\.0 has not been verified with this plugin version \(verified: 1\.3\.5\)/.test(warning)));
 });
 
 test("setup explains how to get agy when it is missing", () => {
@@ -321,6 +346,26 @@ test("write tasks skip permissions inside the guard and never commit", () => {
     assert.match(payload.blockedToolCalls[0].reason, /blocks `git commit`/);
     assert.equal(run("git", ["rev-list", "--count", "HEAD"], { cwd: repo }).stdout.trim(), "1");
   }
+});
+
+test("write tasks report commits made around the guard", () => {
+  const repo = makeRepo();
+  const { env } = setupFake("alias-commit");
+
+  const payload = JSON.parse(companion(["task", "--write", "--json", "commit it"], { cwd: repo, env }).stdout);
+
+  assert.equal(payload.status, 0);
+  assert.ok(payload.warnings.some((warning) => /Git refs changed during this write run: HEAD, refs\/heads\/main\./.test(warning)));
+});
+
+test("write tasks stop when agy does not load the guard", { skip: !GUARDED }, () => {
+  const repo = makeRepo();
+  const { env } = setupFake("guard-ignored");
+
+  const result = companion(["task", "--write", "push it"], { cwd: repo, env });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout, /agy did not load the plugin's tool guard, so the run was stopped/);
 });
 
 test("write tasks cannot edit files outside the repository", { skip: !GUARDED }, () => {
@@ -542,10 +587,12 @@ test("agy stops when its companion is killed without a chance to clean up", { sk
   assert.equal(processAlive(fakePid), true);
   companionProcess.kill("SIGKILL");
 
-  await waitFor(() => !processAlive(fakePid), { timeoutMs: 10000 });
+  // Generous limits: these waits end as soon as the processes are gone, but a loaded machine can
+  // take several seconds to schedule the runner's watchdog.
+  await waitFor(() => !processAlive(fakePid), { timeoutMs: 30000 });
   // The runner outlives the companion long enough to remove the guard folder.
   for (const guardDir of lastInvocation(binDir).addDirs) {
-    await waitFor(() => !fs.existsSync(guardDir), { timeoutMs: 10000 });
+    await waitFor(() => !fs.existsSync(guardDir), { timeoutMs: 30000 });
   }
 });
 
@@ -618,7 +665,7 @@ test("session end stops running jobs of the ending session and drops its records
   });
 
   assert.equal(ended.status, 0, ended.stderr);
-  await waitFor(() => !processAlive(running.geminiPid));
+  await waitFor(() => !processAlive(running.geminiPid), { timeoutMs: 30000 });
   const state = JSON.parse(fs.readFileSync(path.join(resolveStateDir(repo), "state.json"), "utf8"));
   assert.equal(state.jobs.some((job) => job.sessionId === "ending-session"), false);
 });

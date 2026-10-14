@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- The plugin checks on every run that agy loaded its tool guard: a `PreInvocation` hook leaves a marker before each model call, and a run whose first tool call arrives without it is stopped. `/gemini:setup` reports the guard as `on (verified)` or `NOT LOADED by agy`, and is not ready in the second case.
+- After a write-capable run, the plugin compares HEAD and every git ref with their state before the run and warns about commits, checkouts, or remote-tracking refs that changed, including commits made through git aliases or scripts.
+- `/gemini:setup` warns when the installed agy is not a version verified with this plugin (verified: 1.3.5).
+- Usage-limit errors suggest another model: agy counts quota per model, so a different `--model` often still answers.
+- `npm run test:live` runs eight contract tests against the real agy, opt-in with `GEMINI_PLUGIN_LIVE=1`.
+- Fixed lost job records and reset settings when a background job, a command, and a hook updated the plugin state at the same time: state writes are now atomic (temporary file and rename) and read-modify-write updates hold a lock. In a test with eight concurrent writers, the old code kept 5 of 40 jobs. The bug came from the upstream Codex plugin.
+- SessionEnd stops a session's jobs before it drops their records, so a dying worker cannot write its record back.
+
 ## 0.2.1
 
 - CI runs on every push and pull request: the tests and the type check on Ubuntu with Node.js 18.18, 20, 22, 24, and 26 and on macOS with Node.js 24, plus `claude plugin validate --strict` for the marketplace and the plugin.

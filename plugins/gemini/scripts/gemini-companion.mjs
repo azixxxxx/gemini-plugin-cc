@@ -24,17 +24,20 @@ import {
   runAgyTurn,
   terminateAgyProcessTree,
   VALID_EFFORTS,
+  VERIFIED_AGY_VERSIONS,
   WRITE_TASK_CONSTRAINTS
 } from "./lib/agy.mjs";
 import { describeGuard } from "./lib/agy-guard.mjs";
 import { readStdinIfPiped } from "./lib/fs.mjs";
 import {
   collectReviewContext,
+  describeRefChanges,
   describeWorkingTreeChanges,
   ensureGitRepository,
   formatFileListing,
   listRepositoryFiles,
   resolveReviewTarget,
+  snapshotRefs,
   snapshotWorkingTree
 } from "./lib/git.mjs";
 import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
@@ -147,6 +150,29 @@ function buildReadOnlyTaskPrompt(workspaceRoot, prompt) {
   ].join("\n");
 }
 
+/** Runs a write-capable Gemini job and reports git history or remote refs that changed. */
+async function runWriteGuarded(cwd, run) {
+  const before = snapshotRefs(cwd);
+  const result = await run();
+  const changes = describeRefChanges(before, snapshotRefs(cwd));
+  if (changes) {
+    const warnings = [...(result.warnings ?? [])];
+    const local = [...(changes.headMoved ? ["HEAD"] : []), ...changes.localRefs];
+    if (local.length > 0) {
+      warnings.push(
+        `Git refs changed during this write run: ${local.join(", ")}. The plugin blocks git commit; check git log and git reflog for commits or checkouts made another way.`
+      );
+    }
+    if (changes.remoteRefs.length > 0) {
+      warnings.push(
+        `Remote-tracking refs changed during this write run: ${changes.remoteRefs.join(", ")}. Gemini may have run git push or git fetch; check the remote.`
+      );
+    }
+    result.warnings = warnings;
+  }
+  return result;
+}
+
 /** Runs a read-only Gemini job and reports files that changed while it was active. */
 async function runReadOnlyGuarded(cwd, run) {
   const before = snapshotWorkingTree(cwd);
@@ -223,10 +249,21 @@ async function buildSetupReport(cwd, actionsTaken = []) {
   const agyStatus = getAgyAvailability(cwd, { refresh: true });
   const config = getConfig(workspaceRoot);
   const sandbox = describeSandbox(config);
-  const guard = describeGuard();
   const authStatus = await getAgyAuthStatus(cwd);
+  // The sign-in check is a guarded run, so it also shows whether agy loaded the tool guard.
+  const guard = { ...describeGuard(), loaded: authStatus.guardLoaded ?? null };
 
   const warnings = [];
+  if (agyStatus.available && !VERIFIED_AGY_VERSIONS.includes(agyStatus.version)) {
+    warnings.push(
+      `agy ${agyStatus.version} has not been verified with this plugin version (verified: ${VERIFIED_AGY_VERSIONS.join(", ")}). It will probably work; if a command misbehaves, report it at https://github.com/azixxxxx/gemini-plugin-cc/issues.`
+    );
+  }
+  if (guard.enabled && guard.loaded === false) {
+    warnings.push(
+      "agy did not load the plugin's tool guard during the sign-in check, so Gemini runs will stop at their first tool call. Update the plugin, or report your agy version at https://github.com/azixxxxx/gemini-plugin-cc/issues."
+    );
+  }
   const riskyRules = guard.enabled ? [] : findRiskyAllowRules();
   if (riskyRules.length > 0) {
     warnings.push(
@@ -245,7 +282,7 @@ async function buildSetupReport(cwd, actionsTaken = []) {
   }
 
   return {
-    ready: nodeStatus.available && agyStatus.available && authStatus.loggedIn,
+    ready: nodeStatus.available && agyStatus.available && authStatus.loggedIn && guard.loaded !== false,
     node: nodeStatus,
     agy: agyStatus,
     auth: authStatus,
@@ -490,7 +527,7 @@ async function executeTaskRun(request) {
       sandbox: Boolean(request.sandbox),
       onProgress: request.onProgress
     });
-  const result = write ? await run() : await runReadOnlyGuarded(workspaceRoot, run);
+  const result = write ? await runWriteGuarded(workspaceRoot, run) : await runReadOnlyGuarded(workspaceRoot, run);
 
   const rawOutput = typeof result.finalMessage === "string" ? result.finalMessage : "";
   const failureMessage = result.status === 0 ? "" : result.error?.message ?? result.stderr ?? "";

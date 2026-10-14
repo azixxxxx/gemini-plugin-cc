@@ -179,6 +179,16 @@ function appendWarningsSection(lines, warnings) {
   }
 }
 
+function describeGuardStatus(guard) {
+  if (!guard.enabled) {
+    return guard.label;
+  }
+  if (guard.loaded === true) {
+    return "on (verified)";
+  }
+  return guard.loaded === false ? "NOT LOADED by agy" : guard.label;
+}
+
 export function renderSetupReport(report) {
   const lines = [
     "# Gemini Setup",
@@ -190,7 +200,7 @@ export function renderSetupReport(report) {
     `- agy: ${report.agy.detail}`,
     `- auth: ${report.auth.detail}`,
     `- sandbox: ${report.sandbox.label}`,
-    ...(report.guard ? [`- tool guard: ${report.guard.label}`] : []),
+    ...(report.guard ? [`- tool guard: ${describeGuardStatus(report.guard)}`] : []),
     `- review gate: ${report.reviewGateEnabled ? "enabled" : "disabled"}`,
     ""
   ];

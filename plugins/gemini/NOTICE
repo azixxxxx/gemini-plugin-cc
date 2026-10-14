@@ -18,6 +18,8 @@ Modifications by azixxxxx, 2026:
 - Rewrote the review, adversarial review, and stop-gate prompts for Gemini and
   replaced the prompting skill with Gemini-specific guidance.
 - Changed review context collection to inline diffs within a byte budget.
+- Made job state writes atomic and serialized read-modify-write updates with a
+  lock, so concurrent jobs, commands, and hooks no longer lose records.
 - Rewrote the tests for the agy runtime.
 
 Licensed under the Apache License, Version 2.0 (the "License");

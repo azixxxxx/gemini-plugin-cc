@@ -14,6 +14,8 @@
  *   headless run has ended.
  *
  * A silent hook leaves the decision to agy. A hook that fails prints a deny decision instead.
+ * A PreInvocation hook marks the guard as loaded, so the companion can stop a run in which agy
+ * did not load it.
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -33,6 +35,9 @@ export const GUARD_DIR_ENV = "GEMINI_COMPANION_GUARD_DIR";
 const GUARD_HOOK_TIMEOUT_SECONDS = 15;
 // The hook appends every denial here, because agy's stream omits the reason for some steps.
 const DENIAL_LOG = "denials.jsonl";
+// A PreInvocation hook touches this file before every model call, so its absence at the first
+// tool call means agy did not load the guard. SessionStart would miss resumed conversations.
+const LIVENESS_MARKER = "invoked";
 const STALE_GUARD_AGE_MS = 24 * 60 * 60 * 1000;
 
 const READ_ONLY_TOOLS = new Set(["view_file", "list_dir", "find_by_name", "grep_search", "finish", "wait", "wait_5_seconds", "list_permissions"]);
@@ -345,8 +350,12 @@ export function createAgyGuard({ mode, workspaceRoot, nodePath = process.execPat
   removeStaleGuards(choice.parent);
 
   const command = `${[nodePath, GUARD_HOOK_SCRIPT, mode, root, directory].map(shellQuote).join(" ")} || printf '%s\\n' ${shellQuote(JSON.stringify(GUARD_FAILURE_DECISION))}`;
+  const markerPath = path.join(directory, LIVENESS_MARKER);
+  // PreInvocation hooks must print JSON; `{}` means "nothing to inject".
+  const livenessCommand = `touch ${shellQuote(markerPath)} && printf '%s\\n' '{}'`;
   const hooks = {
     [GUARD_HOOK_NAME]: {
+      PreInvocation: [{ type: "command", command: livenessCommand, timeout: GUARD_HOOK_TIMEOUT_SECONDS }],
       PreToolUse: [
         {
           matcher: "*",
@@ -365,6 +374,10 @@ export function createAgyGuard({ mode, workspaceRoot, nodePath = process.execPat
     workspaceFirst: choice.workspaceFirst,
     readDenials() {
       return readDenials(directory);
+    },
+    /** True once agy has run the guard's hooks in this run. */
+    isLoaded() {
+      return fs.existsSync(markerPath);
     },
     cleanup() {
       fs.rmSync(directory, { recursive: true, force: true });

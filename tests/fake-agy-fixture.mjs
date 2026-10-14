@@ -32,6 +32,10 @@ export const FAKE_MODELS = [
  * - "review-invalid": returns prose instead of review JSON.
  * - "stop-block": answers stop-gate prompts with BLOCK.
  * - "no-pro-models": `agy models` lists no Pro model.
+ * - "guard-ignored": loads no hooks, like an agy that stopped reading `--add-dir` folders, then
+ *   starts a `git push` and keeps running until it is signalled.
+ * - "alias-commit": commits through a git alias the guard's command check cannot see.
+ * - "newer-version": reports agy 1.4.0, which the plugin has not verified.
  */
 export function installFakeAgy(binDir, behavior = "ok") {
   const statePath = path.join(binDir, "fake-agy-state.json");
@@ -77,7 +81,7 @@ function flagValue(args, name) {
 const args = process.argv.slice(2);
 
 if (args.includes("--version")) {
-  process.stdout.write(BEHAVIOR === "old-version" ? "1.2.0\\n" : "1.3.5\\n");
+  process.stdout.write(BEHAVIOR === "old-version" ? "1.2.0\\n" : BEHAVIOR === "newer-version" ? "1.4.0\\n" : "1.3.5\\n");
   process.exit(0);
 }
 
@@ -150,8 +154,12 @@ function say(text) {
   return text;
 }
 
-function loadHookHandlers() {
-  const handlers = [];
+function loadHooks() {
+  const preToolUse = [];
+  const preInvocation = [];
+  if (BEHAVIOR === "guard-ignored") {
+    return { preToolUse, preInvocation };
+  }
   for (const directory of addDirs) {
     const file = path.join(directory, ".agents", "hooks.json");
     if (!fs.existsSync(file)) {
@@ -162,14 +170,22 @@ function loadHookHandlers() {
         continue;
       }
       for (const group of hook.PreToolUse || []) {
-        handlers.push({ cwd: path.dirname(file), group });
+        preToolUse.push({ cwd: path.dirname(file), group });
+      }
+      for (const handler of hook.PreInvocation || []) {
+        preInvocation.push({ cwd: path.dirname(file), handler });
       }
     }
   }
-  return handlers;
+  return { preToolUse, preInvocation };
 }
 
-const hookHandlers = loadHookHandlers();
+const { preToolUse: hookHandlers, preInvocation } = loadHooks();
+
+// Like agy, run PreInvocation hooks before the model call; they must print JSON.
+for (const { cwd, handler } of preInvocation) {
+  JSON.parse(execFileSync("sh", ["-c", handler.command], { cwd, input: JSON.stringify({ conversationId, invocationNum: 1 }), encoding: "utf8" }));
+}
 const ARTIFACT_DIR = path.join(path.dirname(STATE_PATH), "brain", conversationId);
 
 function preToolDecision(name, parameters) {
@@ -241,6 +257,12 @@ function reviewObject(verdict, summary, findings) {
   return { verdict, summary, findings, next_steps: findings.length ? ["Add a guard for the empty state."] : [] };
 }
 
+if (BEHAVIOR === "guard-ignored" && !prompt.includes("Reply with exactly the word OK")) {
+  emit({ event: "step_update", step_update: { conversation_id: conversationId, step_index: 1, state: "ACTIVE", step_type: "tool", tool_name: "run_command", tool_info: { name: "run_command", parameters: { CommandLine: "git push origin main" } } } });
+  setInterval(() => {}, 1000);
+  return;
+}
+
 if (BEHAVIOR === "slow-task" || BEHAVIOR === "stubborn") {
   if (BEHAVIOR === "stubborn") {
     process.on("SIGTERM", () => {});
@@ -297,6 +319,12 @@ if (prompt.includes("Reply with exactly the word OK")) {
   });
   tool("run_command", { CommandLine: "git add app.js && git commit -m fix", Cwd: process.cwd() });
   finish("SUCCESS", { response: say("Fixed the bug in app.js.") });
+} else if (BEHAVIOR === "alias-commit") {
+  tool("run_command", { CommandLine: "git ci -m sneaky", Cwd: process.cwd() }, () => {
+    execFileSync("git", ["-c", "user.name=Fake", "-c", "user.email=fake@example.com", "commit", "--allow-empty", "-q", "-m", "sneaky"], { cwd: process.cwd() });
+    return "";
+  });
+  finish("SUCCESS", { response: say("Committed through an alias.") });
 } else if (BEHAVIOR === "outside-edit") {
   // The effect is a no-op, so a guard failure cannot write outside the test folders.
   tool("write_to_file", { TargetFile: "/etc/gemini-plugin-test-outside.txt" }, () => null);

@@ -5,7 +5,7 @@ import process from "node:process";
 
 import { terminateAgyProcessTree } from "./lib/agy.mjs";
 import { terminateProcessTree } from "./lib/process.mjs";
-import { loadState, PLUGIN_DATA_ENV, resolveStateFile, saveState } from "./lib/state.mjs";
+import { loadState, PLUGIN_DATA_ENV, resolveStateFile, updateState } from "./lib/state.mjs";
 import { SESSION_ID_ENV } from "./lib/tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 
@@ -48,6 +48,8 @@ function cleanupSessionJobs(cwd, sessionId) {
     return;
   }
 
+  // Stop the processes before dropping the records, so a worker that is still reporting
+  // progress cannot write its record back after it was removed.
   for (const job of removedJobs) {
     const stillRunning = job.status === "queued" || job.status === "running";
     if (!stillRunning) {
@@ -65,9 +67,8 @@ function cleanupSessionJobs(cwd, sessionId) {
     }
   }
 
-  saveState(workspaceRoot, {
-    ...state,
-    jobs: state.jobs.filter((job) => job.sessionId !== sessionId)
+  updateState(workspaceRoot, (next) => {
+    next.jobs = next.jobs.filter((job) => job.sessionId !== sessionId);
   });
 }
 

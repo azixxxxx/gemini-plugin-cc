@@ -51,6 +51,9 @@ export const AGY_LOGIN_HINT =
 export const DEFAULT_CONTINUE_PROMPT =
   "Continue from the current conversation state. Pick the next highest-value step and follow through until the task is resolved.";
 export const VALID_EFFORTS = Object.freeze(["low", "medium", "high", "xhigh", "max"]);
+// agy versions that passed `npm run test:live` with this plugin version. The plugin relies on
+// undocumented agy behavior (hook discovery, event shapes), so setup flags any other version.
+export const VERIFIED_AGY_VERSIONS = Object.freeze(["1.3.5"]);
 export const WRITE_TASK_CONSTRAINTS = [
   "<operating_constraints>",
   "Claude Code started this task and reviews your changes afterwards.",
@@ -583,7 +586,14 @@ function describeDenied(deniedActions) {
 /**
  * Turns a finished process into `{ kind, message, hint? }`, or null when the run succeeded.
  */
-export function classifyRunError({ exitCode, signal, stderr = "", result = null, deniedActions = [], finalMessage = "", write = false, timedOut = false, nonJsonLines = [] }) {
+export function classifyRunError({ exitCode, signal, stderr = "", result = null, deniedActions = [], finalMessage = "", write = false, timedOut = false, guardNotLoaded = false, nonJsonLines = [] }) {
+  if (guardNotLoaded) {
+    return {
+      kind: "guard-not-loaded",
+      message:
+        "agy did not load the plugin's tool guard, so the run was stopped at Gemini's first tool call. Run `/gemini:setup` to check the guard; if agy was just updated, update the plugin or report the agy version at https://github.com/azixxxxx/gemini-plugin-cc/issues."
+    };
+  }
   if (timedOut) {
     return { kind: "timeout", message: "Gemini did not finish before the time limit and was stopped." };
   }
@@ -646,7 +656,11 @@ export function classifyRunError({ exitCode, signal, stderr = "", result = null,
 
   const quotaLine = firstLineMatching(diagnostics, /quota|RESOURCE_EXHAUSTED|rate limit|\b429\b/i);
   if (quotaLine) {
-    return { kind: "quota", message: `Gemini hit a usage limit: ${shorten(quotaLine, 240)}` };
+    // agy counts quota per model, so another model often still answers.
+    return {
+      kind: "quota",
+      message: `Gemini hit a usage limit: ${shorten(quotaLine, 240)} Pick another model from \`agy models\` with \`--model\`, or wait for the limit to reset.`
+    };
   }
 
   const capacityLine = firstLineMatching(diagnostics, /\b503\b|UNAVAILABLE|high demand|overloaded/i);
@@ -833,8 +847,23 @@ async function runAgyProcess(cwd, { env, availability, args, prompt, write, guar
       stderr = stderr.slice(-MAX_STDERR_CHARS);
     }
   });
+  // agy runs the guard's PreInvocation hook before the model call that produces the first tool
+  // call, so a missing marker at that point means the guard is not active.
+  let guardChecked = false;
+  let guardNotLoaded = false;
   const lines = readline.createInterface({ input: child.stdout });
-  lines.on("line", (line) => applyStreamLine(state, line, onProgress));
+  lines.on("line", (line) => {
+    const toolCallsBefore = state.toolCalls.size;
+    applyStreamLine(state, line, onProgress);
+    if (guard && !guardChecked && state.toolCalls.size > toolCallsBefore) {
+      guardChecked = true;
+      if (!guard.isLoaded()) {
+        guardNotLoaded = true;
+        emitProgress(onProgress, "agy did not load the plugin's tool guard; stopping the run.", "failed");
+        stopChild();
+      }
+    }
+  });
 
   child.stdin.on("error", () => {
     // agy can exit before reading stdin, for example when it is not signed in.
@@ -874,12 +903,17 @@ async function runAgyProcess(cwd, { env, availability, args, prompt, write, guar
     finalMessage: finished.finalMessage,
     write,
     timedOut,
+    guardNotLoaded,
     nonJsonLines: finished.nonJsonLines
   });
   if (error) {
     emitProgress(onProgress, `Gemini run failed: ${shorten(error.message, 160)}`, "failed");
   }
+  const guardLoaded = guard ? guard.isLoaded() : null;
   const warnings = [];
+  if (guard && !guardLoaded && !error && finished.result) {
+    warnings.push("agy did not run the plugin's tool guard hooks in this run. Run `/gemini:setup` to check the guard before relying on it.");
+  }
   if (!error && finished.deniedActions.length > 0) {
     warnings.push(`agy denied ${describeDenied(finished.deniedActions)} during this run.`);
   }
@@ -902,6 +936,7 @@ async function runAgyProcess(cwd, { env, availability, args, prompt, write, guar
     stderr: cleanedStderr,
     sandboxed: write && Boolean(options.sandbox),
     guarded: Boolean(guard),
+    guardLoaded,
     write
   };
 }
@@ -921,6 +956,8 @@ export async function getAgyAuthStatus(cwd, options = {}) {
     probeErrorKind: null,
     /** @type {string | null} */
     hint: null,
+    /** @type {boolean | null} */
+    guardLoaded: null,
     detail: "not checked",
     source: "config"
   };
@@ -939,11 +976,19 @@ export async function getAgyAuthStatus(cwd, options = {}) {
       timeoutMs: options.timeoutMs ?? AUTH_PROBE_TIMEOUT_MS
     });
     if (probe.status === 0) {
-      return { ...base, loggedIn: true, verified: true, detail: `signed in (verified${probe.model ? ` with ${probe.model}` : ""})`, source: "probe" };
+      return {
+        ...base,
+        loggedIn: true,
+        verified: true,
+        guardLoaded: probe.guardLoaded,
+        detail: `signed in (verified${probe.model ? ` with ${probe.model}` : ""})`,
+        source: "probe"
+      };
     }
     return {
       ...base,
       verified: true,
+      guardLoaded: probe.guardLoaded,
       probeErrorKind: probe.error?.kind ?? "unknown",
       hint: probe.error?.hint ?? null,
       detail: probe.error?.message ?? "agy did not answer the sign-in check.",

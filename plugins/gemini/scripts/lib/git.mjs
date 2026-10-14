@@ -404,6 +404,45 @@ export function collectReviewContext(cwd, target, options = {}) {
   };
 }
 
+/**
+ * Records HEAD and every ref, so a write run can report commits, branch moves, or pushes that
+ * the guard's command check missed, for example through a git alias or a script. Returns null
+ * outside a git repository.
+ */
+export function snapshotRefs(cwd) {
+  const refs = git(cwd, ["for-each-ref", "--format=%(refname) %(objectname)"]);
+  if (refs.error || refs.status !== 0) {
+    return null;
+  }
+  const head = git(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  const map = new Map();
+  for (const line of String(refs.stdout).split("\n")) {
+    const [name, objectName] = line.trim().split(" ");
+    if (name && objectName) {
+      map.set(name, objectName);
+    }
+  }
+  return { head: head.status === 0 ? head.stdout.trim() : null, refs: map };
+}
+
+export function describeRefChanges(before, after) {
+  if (!before || !after) {
+    return null;
+  }
+  const changed = [...new Set([...before.refs.keys(), ...after.refs.keys()])]
+    .filter((name) => before.refs.get(name) !== after.refs.get(name))
+    .sort();
+  const headMoved = before.head !== after.head;
+  if (!headMoved && changed.length === 0) {
+    return null;
+  }
+  return {
+    headMoved,
+    localRefs: changed.filter((name) => !name.startsWith("refs/remotes/")),
+    remoteRefs: changed.filter((name) => name.startsWith("refs/remotes/"))
+  };
+}
+
 const SNAPSHOT_MAX_BYTES = 64 * 1024 * 1024;
 
 function hashText(hash, text) {

@@ -1,6 +1,6 @@
 {
   "name": "gemini-plugin-cc",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Use Gemini from Claude Code through the Antigravity CLI to review code or delegate tasks.",
@@ -31,7 +31,8 @@
     "bump-version": "node scripts/bump-version.mjs",
     "check-version": "node scripts/bump-version.mjs --check",
     "build": "tsc -p tsconfig.json",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "test:live": "node --test --test-concurrency=1 tests/live/*.live.mjs"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

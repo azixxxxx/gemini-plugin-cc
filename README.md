@@ -259,7 +259,11 @@ agy has no per-run permission policy, but it runs `PreToolUse` hooks from a `.ag
 
 The guard also covers subagents' tool calls, and it lets agy read and write its own notes for the current conversation under `~/.gemini/antigravity-cli/brain`.
 
-The commit and push check parses the command line, including commands wrapped in `sh -c`, but not git aliases or scripts, so it is a guardrail, not a security boundary. If the guard script fails, the hook denies the call.
+The commit and push check parses the command line, including commands wrapped in `sh -c`, but not git aliases or scripts, so it is a guardrail, not a security boundary. If the guard script fails, the hook denies the call. After every write-capable run the plugin also compares HEAD and all git refs with their state before the run and warns when commits, checkouts, or remote-tracking refs changed, which catches commits made through an alias or a script.
+
+The guard depends on agy loading it, so the plugin checks that on every run. agy runs the guard's `PreInvocation` hook before each model call, and the hook leaves a marker. If the marker is missing when Gemini's first tool call arrives, agy did not load the guard, and the plugin stops the run with an error. `/gemini:setup` checks the same marker during its sign-in check and reports the guard as `on (verified)` or `NOT LOADED by agy`.
+
+The guard also relies on agy behavior that is not documented, such as hook discovery through `--add-dir`. `/gemini:setup` warns when the installed agy is not one of the versions the plugin was verified with.
 
 agy sorts workspace folders by path and treats the first one as the current folder. The guard folder therefore goes into the system temp folder when its path sorts after the repository, otherwise into the repository's `.git` folder. If the companion is killed, the runner removes the guard folder; a folder left behind anyway, for example after a crash, is removed by a later run after a day. On Windows the guard is off.
 
@@ -361,6 +365,14 @@ npm run build
 ```
 
 `npm test` uses a fake `agy` executable that speaks agy's stream-json protocol and runs the guard's hooks, and makes no network calls. `npm run build` type-checks the runtime scripts.
+
+`npm run test:live` checks the agy behavior the plugin relies on against the real agy: hook discovery, guard denials, the liveness marker, the sandbox, structured output, resume, and error shapes. It sends about seven short prompts that count against your agy quota, so it only runs with `GEMINI_PLUGIN_LIVE=1`. agy counts quota per model, so `GEMINI_PLUGIN_LIVE_MODEL` can point it at another model:
+
+```bash
+GEMINI_PLUGIN_LIVE=1 GEMINI_PLUGIN_LIVE_MODEL=claude-sonnet-4-6 npm run test:live
+```
+
+When it passes on a new agy version, add that version to `VERIFIED_AGY_VERSIONS` in [`scripts/lib/agy.mjs`](plugins/gemini/scripts/lib/agy.mjs).
 
 ## Credits
 

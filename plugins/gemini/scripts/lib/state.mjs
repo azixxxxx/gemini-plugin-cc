@@ -14,9 +14,73 @@ const FALLBACK_STATE_ROOT_DIR = path.join(os.tmpdir(), "gemini-companion");
 const STATE_FILE_NAME = "state.json";
 const JOBS_DIR_NAME = "jobs";
 const MAX_JOBS = 50;
+// Background workers, foreground commands, and hooks all update state.json. Writes go through a
+// temporary file and a rename so a reader never sees a half-written file, and read-modify-write
+// updates hold a lock so concurrent updates do not drop each other's changes.
+const LOCK_DIR_NAME = "state.lock";
+const LOCK_TIMEOUT_MS = 5000;
+const LOCK_STALE_MS = 15000;
+const LOCK_RETRY_MS = 15;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Writes a file so that readers see either the old or the new content, never a partial one. */
+export function writeFileAtomic(filePath, content) {
+  const temporary = `${filePath}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+  try {
+    fs.writeFileSync(temporary, content, "utf8");
+    fs.renameSync(temporary, filePath);
+  } catch (error) {
+    fs.rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+/**
+ * Runs `fn` while holding the state lock for this workspace. A lock older than LOCK_STALE_MS
+ * belongs to a process that died and is broken. After LOCK_TIMEOUT_MS the update runs anyway,
+ * because a lost update is better than a command that hangs.
+ */
+function withStateLock(cwd, fn) {
+  ensureStateDir(cwd);
+  const lockDir = path.join(resolveStateDir(cwd), LOCK_DIR_NAME);
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  let acquired = false;
+  while (!acquired) {
+    try {
+      fs.mkdirSync(lockDir);
+      acquired = true;
+    } catch (error) {
+      if (error?.code !== "EEXIST") {
+        throw error;
+      }
+      try {
+        if (Date.now() - fs.statSync(lockDir).mtimeMs > LOCK_STALE_MS) {
+          fs.rmSync(lockDir, { recursive: true, force: true });
+          continue;
+        }
+      } catch {
+        // The holder released it in the meantime.
+      }
+      if (Date.now() > deadline) {
+        break;
+      }
+      sleepSync(LOCK_RETRY_MS);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    if (acquired) {
+      fs.rmSync(lockDir, { recursive: true, force: true });
+    }
+  }
 }
 
 function defaultState() {
@@ -114,14 +178,16 @@ export function saveState(cwd, state) {
     removeFileIfExists(job.logFile);
   }
 
-  fs.writeFileSync(resolveStateFile(cwd), `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
+  writeFileAtomic(resolveStateFile(cwd), `${JSON.stringify(nextState, null, 2)}\n`);
   return nextState;
 }
 
 export function updateState(cwd, mutate) {
-  const state = loadState(cwd);
-  mutate(state);
-  return saveState(cwd, state);
+  return withStateLock(cwd, () => {
+    const state = loadState(cwd);
+    mutate(state);
+    return saveState(cwd, state);
+  });
 }
 
 export function generateJobId(prefix = "job") {
@@ -169,7 +235,7 @@ export function getConfig(cwd) {
 export function writeJobFile(cwd, jobId, payload) {
   ensureStateDir(cwd);
   const jobFile = resolveJobFile(cwd, jobId);
-  fs.writeFileSync(jobFile, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  writeFileAtomic(jobFile, `${JSON.stringify(payload, null, 2)}\n`);
   return jobFile;
 }
 

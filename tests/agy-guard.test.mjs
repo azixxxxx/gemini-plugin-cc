@@ -140,6 +140,21 @@ test("createAgyGuard writes a PreToolUse hook that runs the guard script", skipO
   assert.throws(() => createAgyGuard({ mode: "yolo", workspaceRoot: root }), /Unknown guard mode/);
 });
 
+test("the guard marks itself loaded from a PreInvocation hook that prints JSON", skipOnWindows, () => {
+  const guard = createAgyGuard({ mode: "read-only", workspaceRoot: makeWorkspace() });
+  try {
+    const hooks = JSON.parse(fs.readFileSync(path.join(guard.directory, ".agents", "hooks.json"), "utf8"));
+    const [handler] = hooks[GUARD_HOOK_NAME].PreInvocation;
+    assert.equal(handler.type, "command");
+    assert.equal(guard.isLoaded(), false);
+    const output = execFileSync("sh", ["-c", handler.command], { cwd: path.join(guard.directory, ".agents"), encoding: "utf8" });
+    assert.deepEqual(JSON.parse(output), {});
+    assert.equal(guard.isLoaded(), true);
+  } finally {
+    guard.cleanup();
+  }
+});
+
 test("the guard hook command denies, stays silent, and fails closed", skipOnWindows, () => {
   const root = makeWorkspace();
   const guard = createAgyGuard({ mode: "write", workspaceRoot: root });
