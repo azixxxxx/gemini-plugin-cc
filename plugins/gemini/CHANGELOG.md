@@ -9,6 +9,7 @@
 - `npm run test:live` runs eight contract tests against the real agy, opt-in with `GEMINI_PLUGIN_LIVE=1`.
 - Fixed lost job records and reset settings when a background job, a command, and a hook updated the plugin state at the same time: state writes are now atomic (temporary file and rename) and read-modify-write updates hold a lock. In a test with eight concurrent writers, the old code kept 5 of 40 jobs. The bug came from the upstream Codex plugin.
 - SessionEnd stops a session's jobs before it drops their records, so a dying worker cannot write its record back.
+- When the companion is killed, agy-runner removes the guard folder only after agy has exited, so a hook agy is still running cannot leave the folder behind, and EPIPE on the dead companion's pipes no longer stops the runner before it has stopped agy.
 
 ## 0.2.1
 

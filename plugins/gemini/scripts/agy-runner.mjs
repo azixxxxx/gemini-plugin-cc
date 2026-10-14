@@ -46,6 +46,8 @@ function signalGroup(signal) {
 }
 
 let shuttingDown = false;
+// Set when the companion died; the runner then owns the guard folder's cleanup.
+let companionGone = false;
 
 function shutdown(exitCode) {
   // Signalling the group also signals this process, so only the first call acts.
@@ -55,6 +57,10 @@ function shutdown(exitCode) {
   shuttingDown = true;
   signalGroup("SIGTERM");
   setTimeout(() => {
+    // SIGKILL also hits this process, so clean up first.
+    if (companionGone) {
+      removeGuard();
+    }
     signalGroup("SIGKILL");
     process.exit(exitCode);
   }, KILL_GRACE_MS).unref();
@@ -83,6 +89,11 @@ child.once("error", (error) => {
 });
 
 child.once("exit", (code, signal) => {
+  // Remove the guard only after agy is gone: a hook that agy is still running could otherwise
+  // write into the folder while it is being deleted.
+  if (companionGone) {
+    removeGuard();
+  }
   process.exit(code ?? (signal ? 128 + 15 : 1));
 });
 
@@ -92,7 +103,7 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
 
 setInterval(() => {
   if (process.ppid !== launcherPid) {
-    removeGuard();
+    companionGone = true;
     shutdown(128 + 9);
     try {
       process.stderr.write("The Gemini companion exited; stopping agy.\n");

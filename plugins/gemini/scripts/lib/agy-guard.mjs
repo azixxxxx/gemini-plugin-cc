@@ -266,7 +266,7 @@ export function removeGuardDirectory(directory) {
   if (!fs.existsSync(path.join(directory, ".agents", "hooks.json"))) {
     return false;
   }
-  fs.rmSync(directory, { recursive: true, force: true });
+  fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   return true;
 }
 
@@ -380,7 +380,7 @@ export function createAgyGuard({ mode, workspaceRoot, nodePath = process.execPat
       return fs.existsSync(markerPath);
     },
     cleanup() {
-      fs.rmSync(directory, { recursive: true, force: true });
+      fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   };
 }

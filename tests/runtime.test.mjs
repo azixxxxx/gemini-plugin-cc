@@ -22,7 +22,7 @@ const GUARDED = process.platform !== "win32";
 delete process.env.GEMINI_COMPANION_PLUGIN_DATA;
 delete process.env.CLAUDE_PLUGIN_DATA;
 
-async function waitFor(predicate, { timeoutMs = 10000, intervalMs = 50 } = {}) {
+async function waitFor(predicate, { timeoutMs = 10000, intervalMs = 50, describe = null } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const value = await predicate();
@@ -31,7 +31,15 @@ async function waitFor(predicate, { timeoutMs = 10000, intervalMs = 50 } = {}) {
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
-  throw new Error("Timed out waiting for condition.");
+  throw new Error(`Timed out waiting for condition.${describe ? ` ${describe()}` : ""}`);
+}
+
+function listFolder(directory) {
+  try {
+    return `Left in ${directory}: ${fs.readdirSync(directory, { recursive: true }).join(", ") || "(empty)"}`;
+  } catch (error) {
+    return `${directory}: ${error.code ?? error.message}`;
+  }
 }
 
 function makeRepo() {
@@ -592,7 +600,7 @@ test("agy stops when its companion is killed without a chance to clean up", { sk
   await waitFor(() => !processAlive(fakePid), { timeoutMs: 30000 });
   // The runner outlives the companion long enough to remove the guard folder.
   for (const guardDir of lastInvocation(binDir).addDirs) {
-    await waitFor(() => !fs.existsSync(guardDir), { timeoutMs: 30000 });
+    await waitFor(() => !fs.existsSync(guardDir), { timeoutMs: 30000, describe: () => listFolder(guardDir) });
   }
 });
 
