@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1
+
+- SessionStart compares each export with the last export of that variable in `CLAUDE_ENV_FILE`, because that is the one Bash uses. Before, a value that changed and then changed back stayed at the middle value. The hook still only appends, so lines that other plugins' hooks wrote to the same file stay.
+- [CONTRIBUTING.md](../../CONTRIBUTING.md) names the remote for OpenAI's repository `codex-upstream`. `gh` prefers a remote named `upstream` as the default repository, so in a clone set up the old way `gh` commands targeted openai/codex-plugin-cc.
+
 ## 1.1.0
 
 Fixes for bugs inherited from OpenAI's codex-plugin-cc, several of them reported upstream, and safer defaults.

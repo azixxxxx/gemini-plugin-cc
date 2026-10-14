@@ -46,9 +46,9 @@ Run them when you change how the plugin calls agy, and before every release.
 This project is a fork of [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc). Before a release, check upstream for fixes that apply here:
 
 ```bash
-git remote add upstream https://github.com/openai/codex-plugin-cc.git
-git fetch upstream
-git log --oneline db52e28..upstream/main
+git remote add codex-upstream https://github.com/openai/codex-plugin-cc.git
+git fetch codex-upstream
+git log --oneline db52e28..codex-upstream/main
 ```
 
-`db52e28` is the upstream commit this fork started from.
+`db52e28` is the upstream commit this fork started from. Do not name the remote `upstream`: `gh` prefers a remote with that name as the default repository, and its commands would then target OpenAI's repository. Before you open a pull request upstream, search its open pull requests for the same fix.

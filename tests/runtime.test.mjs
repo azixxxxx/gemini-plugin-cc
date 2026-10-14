@@ -684,6 +684,39 @@ test("session start hook exports the session id and its own plugin data variable
   assert.doesNotMatch(exported, /export CLAUDE_PLUGIN_DATA=/);
 });
 
+test("session start hook keeps the sourced values current and other hooks' lines intact", () => {
+  const envFile = path.join(makeTempDir(), "claude-env.sh");
+  // An earlier start exported sess-a, a later one sess-b, and another plugin's hook then wrote
+  // to the same file without a trailing newline.
+  fs.writeFileSync(
+    envFile,
+    [
+      "export GEMINI_COMPANION_SESSION_ID='sess-a'",
+      "export GEMINI_COMPANION_SESSION_ID='sess-b'",
+      "export OTHER_PLUGIN=1"
+    ].join("\n")
+  );
+  const env = { ...process.env, CLAUDE_ENV_FILE: envFile, CLAUDE_PLUGIN_DATA: "/tmp/gemini plugin data" };
+  delete env.GEMINI_COMPANION_PLUGIN_DATA;
+  for (let i = 0; i < 2; i += 1) {
+    const result = run("node", [SESSION_HOOK, "SessionStart"], {
+      cwd: ROOT,
+      env,
+      input: JSON.stringify({ hook_event_name: "SessionStart", session_id: "sess-a", cwd: ROOT })
+    });
+    assert.equal(result.status, 0, result.stderr);
+  }
+
+  const exported = fs.readFileSync(envFile, "utf8");
+  assert.equal(exported.trim().split("\n").length, 5, exported);
+  const sourced = run("bash", ["-c", 'source "$1" && printf "%s|%s" "$GEMINI_COMPANION_SESSION_ID" "$OTHER_PLUGIN"', "bash", envFile], {
+    cwd: ROOT,
+    env: { PATH: process.env.PATH }
+  });
+  assert.equal(sourced.status, 0, sourced.stderr);
+  assert.equal(sourced.stdout, "sess-a|1");
+});
+
 test("companion state ignores another plugin's CLAUDE_PLUGIN_DATA", () => {
   const repo = makeRepo();
   const { binDir } = setupFake();

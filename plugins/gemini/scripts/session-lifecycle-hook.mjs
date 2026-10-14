@@ -25,9 +25,12 @@ function shellEscape(value) {
 }
 
 /**
- * Appends an export to CLAUDE_ENV_FILE unless the same line is already there. SessionStart runs
- * again on resume and after compaction, and the file persists, so unconditional appends made it
- * grow with every start until Bash calls failed with E2BIG in long sessions.
+ * Appends an export to CLAUDE_ENV_FILE unless the file's last export of that variable already
+ * sets the same value. SessionStart runs again on resume and after compaction, and the file
+ * persists, so unconditional appends made it grow with every start until Bash calls failed with
+ * E2BIG in long sessions. Bash sources the file, so the last export wins: comparing with it
+ * rather than with any earlier line keeps the value current when it changes and changes back.
+ * Appending, not rewriting, keeps lines that other plugins' hooks wrote to the same file.
  */
 function appendEnvVar(name, value) {
   const envFile = process.env.CLAUDE_ENV_FILE;
@@ -41,7 +44,11 @@ function appendEnvVar(name, value) {
   } catch {
     // The file does not exist yet.
   }
-  if (existing.split(/\r?\n/).includes(line)) {
+  const lastExport = existing
+    .split(/\r?\n/)
+    .filter((entry) => entry.startsWith(`export ${name}=`))
+    .at(-1);
+  if (lastExport === line) {
     return;
   }
   const separator = existing && !existing.endsWith("\n") ? "\n" : "";
