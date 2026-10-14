@@ -1,4 +1,23 @@
-Copyright 2026 OpenAI
+Gemini plugin for Claude Code
+Copyright 2026 azixxxxx
+
+This product is a modified version of the Codex plugin for Claude Code
+(https://github.com/openai/codex-plugin-cc, v1.0.6), Copyright 2026 OpenAI,
+licensed under the Apache License, Version 2.0.
+
+Modifications by azixxxxx, 2026:
+- Replaced the Codex app-server and broker runtime with a headless Gemini CLI
+  adapter (`gemini --output-format stream-json`).
+- Renamed the plugin, commands, agent, skills, and runtime script from Codex to
+  Gemini, and removed `/codex:transfer` and the reasoning-effort option, which
+  have no Gemini CLI equivalent.
+- Added Gemini admin policies that keep review and read-only runs read-only, a
+  write guard that blocks `git commit` and `git push`, and an optional Gemini
+  sandbox toggle.
+- Rewrote the review, adversarial review, and stop-gate prompts for Gemini and
+  replaced the prompting skill with Gemini-specific guidance.
+- Changed review context collection to inline diffs within a byte budget.
+- Rewrote the tests for the Gemini runtime.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.

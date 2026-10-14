@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { makeTempDir } from "./helpers.mjs";
-import { resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState } from "../plugins/codex/scripts/lib/state.mjs";
+import { resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState } from "../plugins/gemini/scripts/lib/state.mjs";
 
 test("resolveStateDir uses a temp-backed per-workspace directory", () => {
   const workspace = makeTempDir();
@@ -16,11 +16,13 @@ test("resolveStateDir uses a temp-backed per-workspace directory", () => {
   assert.match(stateDir, new RegExp(`^${os.tmpdir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 });
 
-test("resolveStateDir uses CLAUDE_PLUGIN_DATA when it is provided", () => {
+test("resolveStateDir uses GEMINI_COMPANION_PLUGIN_DATA when it is provided", () => {
   const workspace = makeTempDir();
   const pluginDataDir = makeTempDir();
-  const previousPluginDataDir = process.env.CLAUDE_PLUGIN_DATA;
-  process.env.CLAUDE_PLUGIN_DATA = pluginDataDir;
+  const previousPluginDataDir = process.env.GEMINI_COMPANION_PLUGIN_DATA;
+  const previousClaudePluginDataDir = process.env.CLAUDE_PLUGIN_DATA;
+  process.env.CLAUDE_PLUGIN_DATA = makeTempDir();
+  process.env.GEMINI_COMPANION_PLUGIN_DATA = pluginDataDir;
 
   try {
     const stateDir = resolveStateDir(workspace);
@@ -33,9 +35,14 @@ test("resolveStateDir uses CLAUDE_PLUGIN_DATA when it is provided", () => {
     );
   } finally {
     if (previousPluginDataDir == null) {
+      delete process.env.GEMINI_COMPANION_PLUGIN_DATA;
+    } else {
+      process.env.GEMINI_COMPANION_PLUGIN_DATA = previousPluginDataDir;
+    }
+    if (previousClaudePluginDataDir == null) {
       delete process.env.CLAUDE_PLUGIN_DATA;
     } else {
-      process.env.CLAUDE_PLUGIN_DATA = previousPluginDataDir;
+      process.env.CLAUDE_PLUGIN_DATA = previousClaudePluginDataDir;
     }
   }
 });

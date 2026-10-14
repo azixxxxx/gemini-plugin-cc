@@ -1,36 +1,37 @@
-# Codex plugin for Claude Code
+# Gemini plugin for Claude Code
 
-Use Codex from inside Claude Code for code reviews or to delegate tasks to Codex.
+Use the Gemini CLI from inside Claude Code for code reviews or to delegate tasks to Gemini.
 
-This plugin is for Claude Code users who want an easy way to start using Codex from the workflow
-they already have.
-
-<video src="./docs/plugin-demo.webm" controls muted playsinline autoplay></video>
+This is a fork of [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc) v1.0.6. It keeps the commands, the background job model, and the review gate of the Codex plugin, and replaces the Codex app-server runtime with a headless Gemini CLI runtime.
 
 ## What You Get
 
-- `/codex:review` for a normal read-only Codex review
-- `/codex:adversarial-review` for a steerable challenge review
-- `/codex:rescue`, `/codex:transfer`, `/codex:status`, `/codex:result`, and `/codex:cancel` to delegate work, hand off sessions, and manage background jobs
+- `/gemini:review` for a read-only Gemini code review
+- `/gemini:adversarial-review` for a steerable challenge review
+- `/gemini:rescue`, `/gemini:status`, `/gemini:result`, and `/gemini:cancel` to delegate work and manage background jobs
+- `/gemini:setup` to check the installation, the sign-in, the sandbox, and the optional review gate
 
 ## Requirements
 
-- **ChatGPT subscription (incl. Free) or OpenAI API key.**
-  - Usage will contribute to your Codex usage limits. [Learn more](https://developers.openai.com/codex/pricing).
+- **Gemini CLI with `--admin-policy` support.** Tested with Gemini CLI 0.64.0. Install or update it with `npm install -g @google/gemini-cli@latest`.
+- **A Gemini CLI sign-in:** Sign in with Google, a Gemini API key (`GEMINI_API_KEY`), or Vertex AI. Usage counts against the quota of that account.
 - **Node.js 18.18 or later**
+- macOS is the tested platform. Linux should work, with the Gemini sandbox off by default. Windows is untested.
 
 ## Install
 
 Add the marketplace in Claude Code:
 
 ```bash
-/plugin marketplace add openai/codex-plugin-cc
+/plugin marketplace add azixxxxx/gemini-plugin-cc
 ```
+
+To work from a local clone instead, pass its path: `/plugin marketplace add /path/to/gemini-plugin-cc`.
 
 Install the plugin:
 
 ```bash
-/plugin install codex@openai-codex
+/plugin install gemini@gemini-cc
 ```
 
 Reload plugins:
@@ -42,279 +43,250 @@ Reload plugins:
 Then run:
 
 ```bash
-/codex:setup
+/gemini:setup
 ```
 
-`/codex:setup` will tell you whether Codex is ready. If Codex is missing and npm is available, it can offer to install Codex for you.
+`/gemini:setup` checks Node.js, the Gemini CLI version, and whether Gemini can sign in, by sending one tiny read-only prompt. If Gemini CLI is missing or too old and npm is available, it offers to install the latest version.
 
-If you prefer to install Codex yourself, use:
-
-```bash
-npm install -g @openai/codex
-```
-
-If Codex is installed but not logged in yet, run:
-
-```bash
-!codex login
-```
+If Gemini CLI is installed but not signed in, open a terminal, run `gemini`, choose **Sign in with Google**, finish the browser flow, and quit with `/quit`. Signing in needs an interactive terminal, so do it outside Claude Code. To use an API key instead, export `GEMINI_API_KEY` before you start Claude Code.
 
 After install, you should see:
 
 - the slash commands listed below
-- the `codex:codex-rescue` subagent in `/agents`
+- the `gemini:gemini-rescue` subagent in `/agents`
 
 One simple first run is:
 
 ```bash
-/codex:review --background
-/codex:status
-/codex:result
+/gemini:review --background
+/gemini:status
+/gemini:result
 ```
 
 ## Usage
 
-### `/codex:review`
+### `/gemini:review`
 
-Runs a normal Codex review on your current work. It gives you the same quality of code review as running `/review` inside Codex directly.
-
-> [!NOTE]
-> Code review especially for multi-file changes might take a while. It's generally recommended to run it in the background.
+Runs a read-only Gemini review of your current work and returns a verdict with findings ordered by severity.
 
 Use it when you want:
 
 - a review of your current uncommitted changes
 - a review of your branch compared to a base branch like `main`
 
-Use `--base <ref>` for branch review. It also supports `--wait` and `--background`. It is not steerable and does not take custom focus text. Use [`/codex:adversarial-review`](#codexadversarial-review) when you want to challenge a specific decision or risk area.
+Use `--base <ref>` for branch review and `--model <model>` to pick a Gemini model. It also supports `--wait` and `--background`. It is not steerable and does not take custom focus text. Use [`/gemini:adversarial-review`](#geminiadversarial-review) when you want to challenge a specific decision or risk area.
 
 Examples:
 
 ```bash
-/codex:review
-/codex:review --base main
-/codex:review --background
+/gemini:review
+/gemini:review --base main
+/gemini:review --background
+/gemini:review --model pro
 ```
 
-This command is read-only and will not perform any changes. When run in the background you can use [`/codex:status`](#codexstatus) to check on the progress and [`/codex:cancel`](#codexcancel) to cancel the ongoing task.
+This command is read-only. When run in the background you can use [`/gemini:status`](#geministatus) to check on the progress and [`/gemini:cancel`](#geminicancel) to cancel it.
 
-### `/codex:adversarial-review`
+### `/gemini:adversarial-review`
 
 Runs a **steerable** review that questions the chosen implementation and design.
 
 It can be used to pressure-test assumptions, tradeoffs, failure modes, and whether a different approach would have been safer or simpler.
 
-It uses the same review target selection as `/codex:review`, including `--base <ref>` for branch review.
-It also supports `--wait` and `--background`. Unlike `/codex:review`, it can take extra focus text after the flags.
-
-Use it when you want:
-
-- a review before shipping that challenges the direction, not just the code details
-- review focused on design choices, tradeoffs, hidden assumptions, and alternative approaches
-- pressure-testing around specific risk areas like auth, data loss, rollback, race conditions, or reliability
+It uses the same review target selection as `/gemini:review`, including `--base <ref>` for branch review. It also supports `--wait`, `--background`, and `--model`. Unlike `/gemini:review`, it takes extra focus text after the flags.
 
 Examples:
 
 ```bash
-/codex:adversarial-review
-/codex:adversarial-review --base main challenge whether this was the right caching and retry design
-/codex:adversarial-review --background look for race conditions and question the chosen approach
+/gemini:adversarial-review
+/gemini:adversarial-review --base main challenge whether this was the right caching and retry design
+/gemini:adversarial-review --background look for race conditions and question the chosen approach
 ```
 
 This command is read-only. It does not fix code.
 
-### `/codex:rescue`
+### `/gemini:rescue`
 
-Hands a task to Codex through the `codex:codex-rescue` subagent.
+Hands a task to Gemini through the `gemini:gemini-rescue` subagent.
 
-Use it when you want Codex to:
+Use it when you want Gemini to:
 
 - investigate a bug
 - try a fix
-- continue a previous Codex task
-- take a faster or cheaper pass with a smaller model
+- continue a previous Gemini task
+- take a faster or cheaper pass with a Flash model
 
-> [!NOTE]
-> Depending on the task and the model you choose these tasks might take a long time and it's generally recommended to force the task to be in the background or move the agent to the background.
+Rescue runs are write-capable by default. Gemini edits files in your working tree and never commits or pushes; Claude Code and you review the result.
 
-It supports `--background`, `--wait`, `--resume`, and `--fresh`. If you omit `--resume` and `--fresh`, the plugin can offer to continue the latest rescue thread for this repo.
+It supports `--background`, `--wait`, `--resume`, `--fresh`, and `--model`. If you omit `--resume` and `--fresh`, the plugin can offer to continue the latest rescue session for this repository.
 
 Examples:
 
 ```bash
-/codex:rescue investigate why the tests started failing
-/codex:rescue fix the failing test with the smallest safe patch
-/codex:rescue --resume apply the top fix from the last run
-/codex:rescue --model gpt-5.4-mini --effort medium investigate the flaky integration test
-/codex:rescue --model spark fix the issue quickly
-/codex:rescue --background investigate the regression
+/gemini:rescue investigate why the tests started failing
+/gemini:rescue fix the failing test with the smallest safe patch
+/gemini:rescue --resume apply the top fix from the last run
+/gemini:rescue --model flash investigate the flaky integration test
+/gemini:rescue --background investigate the regression
 ```
 
-You can also just ask for a task to be delegated to Codex:
+You can also just ask for a task to be delegated to Gemini:
 
 ```text
-Ask Codex to redesign the database connection to be more resilient.
+Ask Gemini to redesign the database connection to be more resilient.
 ```
 
 **Notes:**
 
-- if you do not pass `--model` or `--effort`, Codex chooses its own defaults.
-- if you say `spark`, the plugin maps that to `gpt-5.3-codex-spark`
-- follow-up rescue requests can continue the latest Codex task in the repo
+- If you do not pass `--model`, Gemini CLI picks its default (`auto` routing). The aliases `auto`, `pro`, `flash`, and `flash-lite` are resolved by Gemini CLI.
+- Gemini CLI has no reasoning-effort flag, so there is no `--effort`. Ask for `--model pro` when you want more capability.
+- Follow-up rescue requests can continue the latest Gemini session in the repository.
 
-### `/codex:transfer`
+### `/gemini:status`
 
-Creates a persistent Codex thread from the current Claude Code session and prints a `codex resume <session-id>` command.
-
-Use it when you started a debugging or implementation conversation in Claude Code and want to continue that same context directly in Codex.
+Shows running and recent Gemini jobs for the current repository.
 
 Examples:
 
 ```bash
-/codex:transfer
-/codex:transfer --source ~/.claude/projects/-Users-me-repo/<session-id>.jsonl
+/gemini:status
+/gemini:status task-abc123
 ```
 
-The plugin's existing `SessionStart` hook supplies the current transcript path automatically; `--source` is available as a manual override. The transfer uses Codex's external-agent session importer, so it follows the same conversion rules as importing Claude history in the Codex App and creates visible turns that can be continued in the App or TUI. The source must be under `~/.claude/projects`, and older Codex versions that do not expose session import must be upgraded before using this command.
+### `/gemini:result`
 
-### `/codex:status`
-
-Shows running and recent Codex jobs for the current repository.
+Shows the final stored Gemini output for a finished job, with the Gemini session ID and a `gemini --resume <session-id>` command. Run that command from the repository root to continue the session directly in Gemini CLI.
 
 Examples:
 
 ```bash
-/codex:status
-/codex:status task-abc123
+/gemini:result
+/gemini:result task-abc123
 ```
 
-Use it to:
+### `/gemini:cancel`
 
-- check progress on background work
-- see the latest completed job
-- confirm whether a task is still running
-
-### `/codex:result`
-
-Shows the final stored Codex output for a finished job.
-When available, it also includes the Codex session ID so you can reopen that run directly in Codex with `codex resume <session-id>`.
+Cancels an active background Gemini job and stops its Gemini process group.
 
 Examples:
 
 ```bash
-/codex:result
-/codex:result task-abc123
+/gemini:cancel
+/gemini:cancel task-abc123
 ```
 
-### `/codex:cancel`
+### `/gemini:setup`
 
-Cancels an active background Codex job.
+Checks whether Gemini CLI is installed, current, and signed in. If Gemini CLI is missing or too old and npm is available, it can offer to install it for you.
 
-Examples:
+It also manages two per-repository switches:
 
 ```bash
-/codex:cancel
-/codex:cancel task-abc123
+/gemini:setup --enable-review-gate
+/gemini:setup --disable-review-gate
+/gemini:setup --enable-sandbox
+/gemini:setup --disable-sandbox
 ```
 
-### `/codex:setup`
-
-Checks whether Codex is installed and authenticated.
-If Codex is missing and npm is available, it can offer to install Codex for you.
-
-You can also use `/codex:setup` to manage the optional review gate.
-
-#### Enabling review gate
-
-```bash
-/codex:setup --enable-review-gate
-/codex:setup --disable-review-gate
-```
-
-When the review gate is enabled, the plugin uses a `Stop` hook to run a targeted Codex review based on Claude's response. If that review finds issues, the stop is blocked so Claude can address them first.
+When the review gate is enabled, the plugin uses a `Stop` hook to run a Gemini review of Claude's last turn against the current working tree. If that review finds issues, the stop is blocked so Claude can address them first.
 
 > [!WARNING]
-> The review gate can create a long-running Claude/Codex loop and may drain usage limits quickly. Only enable it when you plan to actively monitor the session.
+> The review gate can create a long-running Claude/Gemini loop and may use up quota quickly. Only enable it when you plan to actively monitor the session.
 
 ## Typical Flows
 
 ### Review Before Shipping
 
 ```bash
-/codex:review
+/gemini:review
 ```
 
-### Hand A Problem To Codex
+### Hand A Problem To Gemini
 
 ```bash
-/codex:rescue investigate why the build is failing in CI
+/gemini:rescue investigate why the build is failing in CI
 ```
 
 ### Start Something Long-Running
 
 ```bash
-/codex:adversarial-review --background
-/codex:rescue --background investigate the flaky test
+/gemini:adversarial-review --background
+/gemini:rescue --background investigate the flaky test
 ```
 
 Then check in with:
 
 ```bash
-/codex:status
-/codex:result
+/gemini:status
+/gemini:result
 ```
 
-## Codex Integration
+## How Gemini Runs
 
-The Codex plugin wraps the [Codex app server](https://developers.openai.com/codex/app-server). It uses the global `codex` binary installed in your environment and [applies the same configuration](https://developers.openai.com/codex/config-basic).
+Every job is one headless Gemini CLI process: `gemini --output-format stream-json`. The prompt goes to stdin, and the plugin parses the JSONL event stream for progress, the session ID, tool calls, and the final answer. `NO_BROWSER=true` is set so that an expired login fails immediately instead of waiting for a browser.
 
-### Common Configurations
+Gemini runs in its own process group led by a small runner, [`scripts/gemini-runner.mjs`](plugins/gemini/scripts/gemini-runner.mjs). `/gemini:cancel` stops the whole group and escalates to `SIGKILL` if Gemini ignores `SIGTERM`. The runner also stops Gemini on its own when the job that started it dies, for example when Claude Code kills a Bash task, so a write-capable run never keeps editing unsupervised.
 
-If you want to change the default reasoning effort or the default model that gets used by the plugin, you can define that inside your user-level or project-level `config.toml`. For example to always use `gpt-5.4-mini` on `high` for a specific project you can add the following to a `.codex/config.toml` file at the root of the directory you started Claude in:
+### Read-only runs
 
-```toml
-model = "gpt-5.4-mini"
-model_reasoning_effort = "high"
-```
+Reviews, the stop-gate review, and rescue runs without `--write` start Gemini with `--approval-mode default` and [`policies/read-only.toml`](plugins/gemini/policies/read-only.toml) loaded through `--admin-policy`. That policy denies `write_file`, `replace`, `run_shell_command`, `save_memory`, `web_fetch`, plan-mode switches, and all MCP tools. Gemini can still read files and search.
 
-Your configuration will be picked up based on:
+The admin tier matters: approvals you saved with "Allow for all future sessions" live in `~/.gemini/policies` at the user tier, and without an admin rule they would still let a headless run edit files or run commands.
 
-- user-level config in `~/.codex/config.toml`
-- project-level overrides in `.codex/config.toml`
-- project-level overrides only load when the [project is trusted](https://developers.openai.com/codex/config-advanced#project-config-files-codexconfigtoml)
+If your machine has system admin policies (`/Library/Application Support/GeminiCli/policies` on macOS), Gemini ignores `--admin-policy`, and those system policies decide what read-only runs may do. `/gemini:setup` warns about this.
 
-Check out the Codex docs for more [configuration options](https://developers.openai.com/codex/config-reference).
+Because read-only Gemini cannot run git, the plugin puts the diff and the content of untracked files into the prompt. They share a budget of 1 MB, or 512 KB when the Gemini sandbox is on: a sandboxed Gemini passes the prompt on its own command line, which macOS limits to 1 MB including the environment. A diff over budget is cut at a file boundary, and the omitted files are listed so Gemini can read them with `read_file`. External diff drivers and `textconv` filters are disabled while the plugin collects the diff.
 
-### Moving The Work Over To Codex
+### Write-capable runs
 
-Delegated tasks and any [stop gate](#what-does-the-review-gate-do) run can also be directly resumed inside Codex by running `codex resume` either with the specific session ID you received from running `/codex:result` or `/codex:status` or by selecting it from the list.
+Rescue runs with `--write` (the default for `/gemini:rescue`) use `--approval-mode yolo`, so Gemini can edit files and run commands without prompts. [`policies/write-guard.toml`](plugins/gemini/policies/write-guard.toml) blocks commands that start with `git commit` or `git push`. Prefix rules are a guardrail, not a security boundary.
 
-This way you can review the Codex work or continue the work there.
+### Sandbox
+
+On macOS every plugin run uses Gemini's seatbelt sandbox (`--sandbox`, profile `permissive-open`). Writes are confined to the repository, temporary, and cache directories, and Gemini's credential files are unreadable inside the sandbox. Network access stays on. Turn it off for a repository with `/gemini:setup --disable-sandbox`, for example when a task must write outside the repository.
+
+On other platforms the sandbox is off by default, because it needs Docker or Podman. `/gemini:setup --enable-sandbox` turns it on.
+
+Gemini stores sandboxed sessions under `~/.cache/.gemini` and other sessions under `~/.gemini`. A resumed rescue run therefore always uses the sandbox mode of the run that created the session.
+
+A sandboxed run refuses prompts larger than 768 KB with an explicit error instead of failing inside Gemini. Narrow the request or disable the sandbox for that repository.
+
+## Differences From The Codex Plugin
+
+- There is no `/gemini:transfer`: Gemini CLI cannot import Claude Code sessions.
+- There is no `--effort`: Gemini CLI has no reasoning-effort flag. Use `--model`.
+- `/gemini:review` uses the plugin's own review prompt, because Gemini CLI has no built-in reviewer. Both reviews return the same JSON review schema as the Codex plugin.
+- There is no shared app-server or broker. Each job starts its own Gemini process.
+- `/gemini:setup` verifies the sign-in with one tiny prompt, because cached Google credentials can expire without any local sign of it.
 
 ## FAQ
 
-### Do I need a separate Codex account for this plugin?
+### Do I need a separate account for this plugin?
 
-If you are already signed into Codex on this machine, that account should work immediately here too. This plugin uses your local Codex CLI authentication.
+No. The plugin uses the Gemini CLI login on this machine. If `gemini` works in your terminal, the plugin works too.
 
-If you only use Claude Code today and have not used Codex yet, you will also need to sign in to Codex with either a ChatGPT account or an API key. [Codex is available with your ChatGPT subscription](https://developers.openai.com/codex/pricing/), and [`codex login`](https://developers.openai.com/codex/cli/reference/#codex-login) supports both ChatGPT and API key sign-in. Run `/codex:setup` to check whether Codex is ready, and use `!codex login` if it is not.
+### Will it use my Gemini CLI configuration?
 
-### Does the plugin use a separate Codex runtime?
+Yes. Your `~/.gemini/settings.json` applies, including the default model, hooks, extensions, and MCP servers. Read-only runs disable MCP tools through the admin policy.
 
-No. This plugin delegates through your local [Codex CLI](https://developers.openai.com/codex/cli/) and [Codex app server](https://developers.openai.com/codex/app-server/) on the same machine.
+### Why do I see "Reply with exactly the word OK" sessions in Gemini?
 
-That means:
+That is the sign-in check from `/gemini:setup`. The plugin does not delete it: `gemini --delete-session` falls back to treating an unknown ID as a list index and could delete a different session. Gemini removes old sessions after its retention period, 30 days by default.
 
-- it uses the same Codex install you would use directly
-- it uses the same local authentication state
-- it uses the same repository checkout and machine-local environment
+### Can I continue a Gemini job outside Claude Code?
 
-### Will it use the same Codex config I already have?
+Yes. `/gemini:result` prints the session ID and a `gemini --resume <session-id>` command, with `--sandbox` when the job ran sandboxed. Run it from the repository root, because Gemini stores sessions per project.
 
-Yes. If you already use Codex, the plugin picks up the same [configuration](#common-configurations).
+## Development
 
-### Can I keep using my current API key or base URL setup?
+```bash
+npm ci
+npm test
+npm run build
+```
 
-Yes. Because the plugin uses your local Codex CLI, your existing sign-in method and config still apply.
+`npm test` uses a fake `gemini` executable and makes no network calls. `npm run build` type-checks the runtime scripts.
 
-If you need to point the built-in OpenAI provider at a different endpoint, set `openai_base_url` in your [Codex config](https://developers.openai.com/codex/config-advanced/#config-and-state-locations).
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Based on the Codex plugin for Claude Code, Copyright 2026 OpenAI.

@@ -1,0 +1,28 @@
+# Read-only guard for Gemini runs started by the Gemini plugin for Claude Code.
+#
+# Loaded with `gemini --admin-policy` for reviews, stop-gate reviews, and rescue tasks
+# that run without --write. Admin-tier rules outrank user-tier rules, including the
+# "Allow for all future sessions" approvals that Gemini saves to ~/.gemini/policies.
+# Without this file, a saved approval for write_file or a shell prefix would still
+# apply in headless runs.
+
+[[rule]]
+toolName = [
+  "write_file",
+  "replace",
+  "run_shell_command",
+  "save_memory",
+  "web_fetch",
+  "enter_plan_mode",
+  "exit_plan_mode"
+]
+decision = "deny"
+priority = 999
+denyMessage = "Claude Code started this Gemini run in read-only mode: file edits, shell commands, URL fetches, memory writes, and mode switches are disabled. Use read_file, glob, grep_search, and list_directory instead."
+
+[[rule]]
+toolName = "*"
+mcpName = "*"
+decision = "deny"
+priority = 999
+denyMessage = "Claude Code started this Gemini run in read-only mode: MCP tools are disabled."
