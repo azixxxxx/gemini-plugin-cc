@@ -171,6 +171,8 @@ Examples:
 
 Shows the final stored Gemini output for a finished job, with the agy conversation ID and an `agy --conversation <id>` command. Run that command from the repository root to continue the conversation directly in agy.
 
+Review and task output ends with the tool calls the plugin's guard blocked, if any, and the run's token usage, for example `Usage: 45,251 tokens (43,680 input, 1,571 output)`. agy counts usage against your account's quota per model.
+
 Examples:
 
 ```bash
@@ -191,7 +193,7 @@ Examples:
 
 ### `/gemini:setup`
 
-Checks whether agy is installed, recent enough, and signed in, and reports the sandbox, the tool guard, and the review gate.
+Checks whether agy is installed, recent enough, and signed in, and reports the sandbox, the tool guard, the models your account can use, and the review gate.
 
 It also manages two per-repository switches:
 
@@ -271,7 +273,7 @@ agy sorts workspace folders by path and treats the first one as the current fold
 
 Reviews, the stop-gate review, and rescue runs without `--write` start agy without `--dangerously-skip-permissions`. Headless agy then refuses file edits and shell commands by itself, but it ends the run without an answer when Gemini tries one, and it allows web tools. The tool guard turns those attempts into denials Gemini can recover from and blocks the web.
 
-agy gives the model no tool to list folders or search file contents; it does that with shell commands. Read-only Gemini can therefore only open files it knows about, so the plugin puts the repository's file list (tracked and untracked files that git does not ignore, up to 32 KB) into every read-only prompt. Without it, Gemini guesses file names: in one test the same read-only task took 384 seconds without the list and 35 seconds with it.
+agy gives the model no tool to list folders or search file contents; it does that with shell commands. Read-only Gemini can therefore only open files it knows about, so the plugin puts the repository's file list (tracked and untracked files that git does not ignore, up to 32 KB, starting with the folders of changed files when the list does not fit) into every read-only prompt. Without it, Gemini guesses file names: in one test the same read-only task took 384 seconds without the list and 35 seconds with it.
 
 Because read-only Gemini cannot run git, the plugin also puts the diff and the content of untracked files into review prompts. They share a budget of 1 MB. A diff over budget is cut at a file boundary, and the omitted files are listed so Gemini can read them with `view_file`. External diff drivers and `textconv` filters are disabled while the plugin collects the diff.
 
@@ -290,7 +292,7 @@ On macOS and Linux, write-capable runs also pass `--sandbox`, which turns on agy
 - cannot read your home folder, for example `~/.zshrc` or `~/Library/Application Support`;
 - keep network access.
 
-Gemini's own file tools are not sandboxed; the tool guard limits where they write. Builds, installs, and tests that write into the repository fail inside the sandbox. Turn it off for a repository with `/gemini:setup --disable-sandbox`; commands then run with your user's permissions, and the guard's commit and push check is their only limit.
+Gemini's own file tools are not sandboxed; the tool guard limits where they write. Builds, installs, and tests that write into the repository fail inside the sandbox; when shell commands fail with "Operation not permitted", the run's warnings point to the switch below. Turn it off for a repository with `/gemini:setup --disable-sandbox`; commands then run with your user's permissions, and the guard's commit and push check is their only limit.
 
 Read-only runs do not pass `--sandbox`, because they cannot run commands.
 

@@ -274,8 +274,9 @@ function formatUntrackedFilesWithinBudget(cwd, files, budgetBytes) {
 }
 
 /**
- * Lists tracked and untracked, non-ignored files, sorted, within a byte budget. Returns null
- * outside a git repository.
+ * Lists tracked and untracked, non-ignored files, sorted, within a byte budget. When the list does
+ * not fit, files in the folders of `priorityFiles` (usually the changed files) are kept first.
+ * Returns null outside a git repository.
  */
 export function listRepositoryFiles(cwd, options = {}) {
   const maxBytes = options.maxBytes ?? REPOSITORY_FILE_LIST_MAX_BYTES;
@@ -284,17 +285,33 @@ export function listRepositoryFiles(cwd, options = {}) {
     return null;
   }
   const files = [...new Set(String(result.stdout).split("\0").filter(Boolean))].sort();
+  const priorityFolders = new Set((options.priorityFiles ?? []).map((file) => path.posix.dirname(String(file))));
+  const inPriorityFolder = (file) => priorityFolders.has(path.posix.dirname(file));
+  const ordered = priorityFolders.size > 0 ? [...files.filter(inPriorityFolder), ...files.filter((file) => !inPriorityFolder(file))] : files;
   const kept = [];
   let used = 0;
-  for (const file of files) {
+  for (const file of ordered) {
     const size = Buffer.byteLength(file, "utf8") + 1;
     if (used + size > maxBytes) {
+      if (priorityFolders.size > 0) {
+        continue;
+      }
       break;
     }
     kept.push(file);
     used += size;
   }
-  return { files: kept, total: files.length, omitted: files.length - kept.length };
+  return { files: kept.sort(), total: files.length, omitted: files.length - kept.length };
+}
+
+/** Returns the staged, unstaged, and untracked files of the working tree, or [] outside git. */
+export function listChangedFiles(cwd) {
+  try {
+    const state = getWorkingTreeState(cwd);
+    return listUniqueFiles(state.staged, state.unstaged, state.untracked);
+  } catch {
+    return [];
+  }
 }
 
 /** Formats a file listing as plain lines, noting how many files did not fit. */
@@ -387,7 +404,7 @@ export function collectReviewContext(cwd, target, options = {}) {
     target.mode === "working-tree"
       ? collectWorkingTreeContext(repoRoot, getWorkingTreeState(repoRoot), budgetBytes)
       : collectBranchContext(repoRoot, target.baseRef, budgetBytes);
-  const fileListing = formatFileListing(listRepositoryFiles(repoRoot));
+  const fileListing = formatFileListing(listRepositoryFiles(repoRoot, { priorityFiles: details.changedFiles }));
   if (fileListing) {
     details.content = [details.content, formatSection("Repository Files", fileListing)].filter(Boolean).join("\n");
   }

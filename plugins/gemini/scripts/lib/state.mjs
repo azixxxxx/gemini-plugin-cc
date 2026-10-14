@@ -18,8 +18,12 @@ const MAX_JOBS = 50;
 // temporary file and a rename so a reader never sees a half-written file, and read-modify-write
 // updates hold a lock so concurrent updates do not drop each other's changes.
 const LOCK_DIR_NAME = "state.lock";
-const LOCK_TIMEOUT_MS = 5000;
-const LOCK_STALE_MS = 15000;
+const LOCK_OWNER_FILE = "owner";
+// A dead owner's lock is broken at once; a live owner's only after LOCK_STALE_MS. Updates take
+// milliseconds, so waiting LOCK_TIMEOUT_MS only happens on a machine that is badly overloaded.
+const LOCK_TIMEOUT_MS = 60000;
+const LOCK_STALE_MS = 60000;
+const LOCK_OWNERLESS_MS = 2000;
 const LOCK_RETRY_MS = 15;
 
 function nowIso() {
@@ -42,10 +46,33 @@ export function writeFileAtomic(filePath, content) {
   }
 }
 
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+/** True when the lock's owner died, or when it has been held for longer than it ever should. */
+function lockIsAbandoned(lockDir) {
+  const age = Date.now() - fs.statSync(lockDir).mtimeMs;
+  let owner = Number.NaN;
+  try {
+    owner = Number(fs.readFileSync(path.join(lockDir, LOCK_OWNER_FILE), "utf8"));
+  } catch {
+    // The owner may not have written its pid yet.
+  }
+  if (Number.isInteger(owner) && owner > 0) {
+    return !processAlive(owner) || age > LOCK_STALE_MS;
+  }
+  return age > LOCK_OWNERLESS_MS;
+}
+
 /**
- * Runs `fn` while holding the state lock for this workspace. A lock older than LOCK_STALE_MS
- * belongs to a process that died and is broken. After LOCK_TIMEOUT_MS the update runs anyway,
- * because a lost update is better than a command that hangs.
+ * Runs `fn` while holding the state lock for this workspace. After LOCK_TIMEOUT_MS the update
+ * runs anyway, because a lost update is better than a command that hangs forever.
  */
 function withStateLock(cwd, fn) {
   ensureStateDir(cwd);
@@ -56,12 +83,16 @@ function withStateLock(cwd, fn) {
     try {
       fs.mkdirSync(lockDir);
       acquired = true;
+      fs.writeFileSync(path.join(lockDir, LOCK_OWNER_FILE), String(process.pid), "utf8");
     } catch (error) {
+      if (acquired) {
+        break;
+      }
       if (error?.code !== "EEXIST") {
         throw error;
       }
       try {
-        if (Date.now() - fs.statSync(lockDir).mtimeMs > LOCK_STALE_MS) {
+        if (lockIsAbandoned(lockDir)) {
           fs.rmSync(lockDir, { recursive: true, force: true });
           continue;
         }

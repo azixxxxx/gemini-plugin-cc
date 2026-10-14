@@ -5,10 +5,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { makeTempDir } from "./helpers.mjs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { loadState, resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState, writeFileAtomic } from "../plugins/gemini/scripts/lib/state.mjs";
+import { loadState, resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState, upsertJob, writeFileAtomic } from "../plugins/gemini/scripts/lib/state.mjs";
 
 const STATE_MODULE = fileURLToPath(new URL("../plugins/gemini/scripts/lib/state.mjs", import.meta.url));
 
@@ -155,4 +155,19 @@ test("writeFileAtomic replaces the file and leaves no temporary files", () => {
 
   assert.equal(fs.readFileSync(target, "utf8"), "new\n");
   assert.deepEqual(fs.readdirSync(directory), ["state.json"]);
+});
+
+test("a state lock left by a dead process is broken at once", () => {
+  const workspace = makeTempDir();
+  const lockDir = path.join(resolveStateDir(workspace), "state.lock");
+  fs.mkdirSync(lockDir, { recursive: true });
+  const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
+  fs.writeFileSync(path.join(lockDir, "owner"), String(deadPid));
+
+  const started = Date.now();
+  upsertJob(workspace, { id: "job-after-crash", status: "running" });
+
+  assert.ok(Date.now() - started < 2000, `waited ${Date.now() - started} ms`);
+  assert.deepEqual(loadState(workspace).jobs.map((job) => job.id), ["job-after-crash"]);
+  assert.equal(fs.existsSync(lockDir), false);
 });

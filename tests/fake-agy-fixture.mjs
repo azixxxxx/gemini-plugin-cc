@@ -36,6 +36,7 @@ export const FAKE_MODELS = [
  *   starts a `git push` and keeps running until it is signalled.
  * - "alias-commit": commits through a git alias the guard's command check cannot see.
  * - "newer-version": reports agy 1.4.0, which the plugin has not verified.
+ * - "sandbox-denied": runs `mkdir build`, which fails like agy's sandbox makes it fail.
  */
 export function installFakeAgy(binDir, behavior = "ok") {
   const statePath = path.join(binDir, "fake-agy-state.json");
@@ -141,7 +142,7 @@ emit({
 let step = 0;
 
 function finish(status, extra = {}) {
-  emit({ event: "result", result: { conversation_id: conversationId, status, usage: { input_tokens: 30, output_tokens: 12 }, ...extra } });
+  emit({ event: "result", result: { conversation_id: conversationId, status, usage: { input_tokens: 30, output_tokens: 12, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 42 }, ...extra } });
   process.exit(status === "SUCCESS" ? 0 : 1);
 }
 
@@ -319,6 +320,11 @@ if (prompt.includes("Reply with exactly the word OK")) {
   });
   tool("run_command", { CommandLine: "git add app.js && git commit -m fix", Cwd: process.cwd() });
   finish("SUCCESS", { response: say("Fixed the bug in app.js.") });
+} else if (BEHAVIOR === "sandbox-denied") {
+  tool("run_command", { CommandLine: "mkdir build && npm run build", Cwd: process.cwd() }, () =>
+    args.includes("--sandbox") ? "mkdir: build: Operation not permitted\\r\\n" : "built\\r\\n"
+  );
+  finish("SUCCESS", { response: say("The build step could not create its folder.") });
 } else if (BEHAVIOR === "alias-commit") {
   tool("run_command", { CommandLine: "git ci -m sneaky", Cwd: process.cwd() }, () => {
     execFileSync("git", ["-c", "user.name=Fake", "-c", "user.email=fake@example.com", "commit", "--allow-empty", "-q", "-m", "sneaky"], { cwd: process.cwd() });

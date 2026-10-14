@@ -90,8 +90,9 @@ child.once("error", (error) => {
 
 child.once("exit", (code, signal) => {
   // Remove the guard only after agy is gone: a hook that agy is still running could otherwise
-  // write into the folder while it is being deleted.
-  if (companionGone) {
+  // write into the folder while it is being deleted. agy can also exit on its own right after
+  // the companion died, from EPIPE on the dead pipe, before the watchdog's next tick.
+  if (companionGone || process.ppid !== launcherPid) {
     removeGuard();
   }
   process.exit(code ?? (signal ? 128 + 15 : 1));

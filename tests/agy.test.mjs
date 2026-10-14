@@ -302,6 +302,19 @@ test("runAgyTurn stops a run at the first tool call when agy did not load the gu
   assert.throws(() => process.kill(fakePid, 0));
 });
 
+test("sandboxed write runs explain commands that the sandbox refused", async () => {
+  const { env } = setupFake("sandbox-denied");
+  const repo = makeTempDir();
+
+  const sandboxed = await runAgyTurn(repo, { prompt: "build it", write: true, sandbox: true, env });
+  assert.equal(sandboxed.status, 0);
+  assert.equal(sandboxed.warnings.length, 1);
+  assert.match(sandboxed.warnings[0], /1 shell command\(s\) failed with "Operation not permitted" \(`mkdir build && npm run build`\).*\/gemini:setup --disable-sandbox/);
+
+  const unsandboxed = await runAgyTurn(repo, { prompt: "build it", write: true, sandbox: false, env });
+  assert.deepEqual(unsandboxed.warnings, []);
+});
+
 test("runAgyTurn reports an expired sign-in", async () => {
   const { binDir, env } = setupFake("auth-failure");
   const result = await runAgyTurn(binDir, { prompt: "hello", env });

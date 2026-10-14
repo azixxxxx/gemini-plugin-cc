@@ -35,6 +35,7 @@ import {
   describeWorkingTreeChanges,
   ensureGitRepository,
   formatFileListing,
+  listChangedFiles,
   listRepositoryFiles,
   resolveReviewTarget,
   snapshotRefs,
@@ -139,7 +140,7 @@ function normalizeReasoningEffort(effort) {
  * cannot list folders or search, and without the list it guesses file names.
  */
 function buildReadOnlyTaskPrompt(workspaceRoot, prompt) {
-  const listing = formatFileListing(listRepositoryFiles(workspaceRoot));
+  const listing = formatFileListing(listRepositoryFiles(workspaceRoot, { priorityFiles: listChangedFiles(workspaceRoot) }));
   return [
     "<read_only_run>",
     `This run is read-only. You can read files inside ${workspaceRoot} with view_file. You cannot list folders, search file contents, run shell commands, edit files, use the web, or start subagents.`,
@@ -271,6 +272,15 @@ async function buildSetupReport(cwd, actionsTaken = []) {
     );
   }
 
+  let models = [];
+  if (agyStatus.available && authStatus.loggedIn) {
+    try {
+      models = listAgyModels(cwd).map((model) => model.slug);
+    } catch {
+      models = [];
+    }
+  }
+
   const nextSteps = [];
   if (!agyStatus.available) {
     nextSteps.push(agyStatus.tooOld ? "Update the Antigravity CLI with `agy update`." : AGY_INSTALL_HINT);
@@ -288,6 +298,7 @@ async function buildSetupReport(cwd, actionsTaken = []) {
     auth: authStatus,
     sandbox,
     guard,
+    models,
     reviewGateEnabled: Boolean(config.stopReviewGate),
     warnings,
     actionsTaken,
@@ -465,6 +476,7 @@ async function executeReviewRun(request) {
       stdout: result.finalMessage,
       deniedActions: result.deniedActions,
       blockedToolCalls: result.blockedToolCalls,
+      usage: result.usage,
       warnings: result.warnings,
       error: result.error
     },
@@ -482,6 +494,8 @@ async function executeReviewRun(request) {
       reviewLabel: reviewName,
       targetLabel: context.target.label,
       warnings: result.warnings,
+      blockedToolCalls: result.blockedToolCalls,
+      usage: result.usage,
       failureMessage: result.status === 0 ? null : result.error?.message ?? null
     }),
     summary: parsed.parsed?.summary ?? result.error?.message ?? parsed.parseError ?? firstMeaningfulLine(result.finalMessage, `${reviewName} finished.`),
@@ -540,7 +554,9 @@ async function executeTaskRun(request) {
       title: taskMetadata.title,
       jobId: request.jobId ?? null,
       write,
-      warnings: result.warnings
+      warnings: result.warnings,
+      blockedToolCalls: result.blockedToolCalls,
+      usage: result.usage
     }
   );
   const payload = {
@@ -552,6 +568,7 @@ async function executeTaskRun(request) {
     touchedFiles: result.touchedFiles,
     deniedActions: result.deniedActions,
     blockedToolCalls: result.blockedToolCalls,
+    usage: result.usage,
     warnings: result.warnings,
     error: result.error
   };

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Review and task output ends with the tool calls the plugin's guard blocked, grouped by tool and reason, and the run's token usage. The JSON output carries `blockedToolCalls` and `usage`.
+- Sandboxed write runs warn when shell commands fail with "Operation not permitted" and point to `/gemini:setup --disable-sandbox`.
+- `/gemini:setup` lists the models your account can use.
+- In repositories whose file list is over 32 KB, the list in read-only prompts starts with the folders of changed files.
+- State locks record their owner, so a lock left by a crashed process is broken at once instead of after a timeout, and live owners get up to a minute on an overloaded machine.
+- agy-runner also removes the guard folder when agy exits on its own right after the companion died.
+
 ## 0.3.0
 
 - The plugin checks on every run that agy loaded its tool guard: a `PreInvocation` hook leaves a marker before each model call, and a run whose first tool call arrives without it is stopped. `/gemini:setup` reports the guard as `on (verified)` or `NOT LOADED by agy`, and is not ready in the second case.

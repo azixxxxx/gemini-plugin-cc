@@ -113,9 +113,12 @@ test("setup reports ready when agy answers the sign-in check", () => {
   assert.equal(payload.sandbox.enabled, SANDBOX_DEFAULT);
   assert.equal(payload.guard.enabled, GUARDED);
   assert.equal(payload.guard.loaded, GUARDED ? true : null);
+  assert.deepEqual(payload.models, ["gemini-3.8-flash-high", "gemini-3.8-flash-low", "gemini-3.1-pro-high", "claude-sonnet-4-6"]);
   assert.deepEqual(payload.warnings, []);
+  const rendered = companion(["setup"], { cwd: ROOT, env }).stdout;
+  assert.match(rendered, /- models: gemini-3\.8-flash-high, gemini-3\.8-flash-low, gemini-3\.1-pro-high, claude-sonnet-4-6/);
   if (GUARDED) {
-    assert.match(companion(["setup"], { cwd: ROOT, env }).stdout, /- tool guard: on \(verified\)/);
+    assert.match(rendered, /- tool guard: on \(verified\)/);
   }
   const probe = lastInvocation(binDir);
   assert.match(probe.prompt, /Reply with exactly the word OK/);
@@ -349,10 +352,13 @@ test("write tasks skip permissions inside the guard and never commit", () => {
   assertGuarded(invocation);
   assert.match(invocation.prompt, /^fix the bug\n\n<operating_constraints>/);
   assert.match(invocation.prompt, /do not run git commit, git push/);
+  assert.deepEqual(payload.usage, { input_tokens: 30, output_tokens: 12, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 42 });
   if (GUARDED) {
     assert.equal(payload.blockedToolCalls.length, 1);
     assert.match(payload.blockedToolCalls[0].reason, /blocks `git commit`/);
     assert.equal(run("git", ["rev-list", "--count", "HEAD"], { cwd: repo }).stdout.trim(), "1");
+    const rendered = companion(["task", "--write", "fix the bug again"], { cwd: repo, env }).stdout;
+    assert.match(rendered, /Blocked by the plugin's tool guard:\n- run_command: The Gemini plugin blocks `git commit`\.\n\nUsage: 42 tokens \(30 input, 12 output\)\n$/);
   }
 });
 

@@ -7,6 +7,7 @@ import {
   collectReviewContext,
   describeRefChanges,
   formatFileListing,
+  listChangedFiles,
   listRepositoryFiles,
   resolveReviewTarget,
   snapshotRefs
@@ -346,4 +347,26 @@ test("describeRefChanges reports commits, branch moves, and remote-tracking upda
   assert.deepEqual(changes.remoteRefs, ["refs/remotes/origin/main"]);
   assert.equal(snapshotRefs(makeTempDir()), null);
   assert.equal(describeRefChanges(null, before), null);
+});
+
+test("listRepositoryFiles keeps the changed files' folders first when the list does not fit", () => {
+  const cwd = makeTempDir();
+  initGitRepo(cwd);
+  for (const folder of ["aaa", "src"]) {
+    fs.mkdirSync(path.join(cwd, folder));
+    for (const name of ["one.js", "two.js", "three.js"]) {
+      fs.writeFileSync(path.join(cwd, folder, name), "x\n");
+    }
+  }
+  run("git", ["add", "."], { cwd });
+  run("git", ["commit", "-m", "init"], { cwd });
+  fs.writeFileSync(path.join(cwd, "src", "two.js"), "changed\n");
+
+  assert.deepEqual(listChangedFiles(cwd), ["src/two.js"]);
+  const listing = listRepositoryFiles(cwd, { maxBytes: 35, priorityFiles: listChangedFiles(cwd) });
+
+  assert.deepEqual(listing.files, ["src/one.js", "src/three.js", "src/two.js"]);
+  assert.equal(listing.omitted, 3);
+  assert.deepEqual(listRepositoryFiles(cwd, { maxBytes: 35 }).files, ["aaa/one.js", "aaa/three.js", "aaa/two.js"]);
+  assert.deepEqual(listChangedFiles(makeTempDir()), []);
 });

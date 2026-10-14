@@ -179,6 +179,59 @@ function appendWarningsSection(lines, warnings) {
   }
 }
 
+const MAX_BLOCKED_LINES = 10;
+
+function firstSentence(text) {
+  const normalized = String(text ?? "").trim().replace(/\s+/g, " ");
+  const match = normalized.match(/^.*?[.!?](?=\s|$)/);
+  const sentence = match ? match[0] : normalized;
+  return sentence.length > 160 ? `${sentence.slice(0, 157)}...` : sentence;
+}
+
+/** Lists the tool calls the plugin's guard blocked, one line per distinct tool and reason. */
+export function formatBlockedToolCalls(blockedToolCalls) {
+  if (!Array.isArray(blockedToolCalls) || blockedToolCalls.length === 0) {
+    return [];
+  }
+  const counts = new Map();
+  for (const call of blockedToolCalls) {
+    const line = `${call.toolName}: ${firstSentence(call.reason)}`;
+    counts.set(line, (counts.get(line) ?? 0) + 1);
+  }
+  const lines = [...counts].slice(0, MAX_BLOCKED_LINES).map(([line, count]) => `- ${line}${count > 1 ? ` (${count} times)` : ""}`);
+  if (counts.size > MAX_BLOCKED_LINES) {
+    lines.push(`- ...and ${counts.size - MAX_BLOCKED_LINES} more`);
+  }
+  return ["Blocked by the plugin's tool guard:", ...lines];
+}
+
+/** Formats agy's token usage, for example "45,251 tokens (43,680 input, 1,571 output)". */
+export function formatUsage(usage) {
+  if (!usage || typeof usage !== "object" || !Number.isFinite(usage.total_tokens)) {
+    return null;
+  }
+  const number = (value) => Number(value).toLocaleString("en-US");
+  const parts = [`${number(usage.input_tokens ?? 0)} input`, `${number(usage.output_tokens ?? 0)} output`];
+  if (usage.thinking_tokens > 0) {
+    parts.push(`${number(usage.thinking_tokens)} thinking`);
+  }
+  if (usage.cache_read_tokens > 0) {
+    parts.push(`${number(usage.cache_read_tokens)} cached`);
+  }
+  return `${number(usage.total_tokens)} tokens (${parts.join(", ")})`;
+}
+
+function appendRunDetails(lines, meta = {}) {
+  const blocked = formatBlockedToolCalls(meta.blockedToolCalls);
+  if (blocked.length > 0) {
+    lines.push("", ...blocked);
+  }
+  const usage = formatUsage(meta.usage);
+  if (usage) {
+    lines.push("", `Usage: ${usage}`);
+  }
+}
+
 function describeGuardStatus(guard) {
   if (!guard.enabled) {
     return guard.label;
@@ -201,6 +254,7 @@ export function renderSetupReport(report) {
     `- auth: ${report.auth.detail}`,
     `- sandbox: ${report.sandbox.label}`,
     ...(report.guard ? [`- tool guard: ${describeGuardStatus(report.guard)}`] : []),
+    ...(report.models?.length > 0 ? [`- models: ${report.models.join(", ")}`] : []),
     `- review gate: ${report.reviewGateEnabled ? "enabled" : "disabled"}`,
     ""
   ];
@@ -238,6 +292,7 @@ export function renderReviewResult(parsedResult, meta) {
       lines.push("", "Partial output:", "", "```text", parsedResult.rawOutput, "```");
     }
     appendWarningsSection(lines, meta.warnings);
+    appendRunDetails(lines, meta);
     return `${lines.join("\n").trimEnd()}\n`;
   }
 
@@ -256,6 +311,7 @@ export function renderReviewResult(parsedResult, meta) {
     }
 
     appendWarningsSection(lines, meta.warnings);
+    appendRunDetails(lines, meta);
 
     return `${lines.join("\n").trimEnd()}\n`;
   }
@@ -276,6 +332,7 @@ export function renderReviewResult(parsedResult, meta) {
     }
 
     appendWarningsSection(lines, meta.warnings);
+    appendRunDetails(lines, meta);
 
     return `${lines.join("\n").trimEnd()}\n`;
   }
@@ -314,6 +371,7 @@ export function renderReviewResult(parsedResult, meta) {
   }
 
   appendWarningsSection(lines, meta.warnings);
+  appendRunDetails(lines, meta);
 
   return `${lines.join("\n").trimEnd()}\n`;
 }
@@ -322,12 +380,15 @@ export function renderTaskResult(parsedResult, meta = {}) {
   const rawOutput = typeof parsedResult?.rawOutput === "string" ? parsedResult.rawOutput : "";
   const failureMessage = String(parsedResult?.failureMessage ?? "").trim();
   const warnings = Array.isArray(meta.warnings) && meta.warnings.length > 0 ? `\nWarnings:\n${meta.warnings.map((warning) => `- ${warning}`).join("\n")}\n` : "";
+  const detailLines = [];
+  appendRunDetails(detailLines, meta);
+  const details = detailLines.length > 0 ? `${detailLines.join("\n")}\n` : "";
   if (rawOutput) {
     const output = rawOutput.endsWith("\n") ? rawOutput : `${rawOutput}\n`;
-    return `${failureMessage ? `${output}\nGemini run failed: ${failureMessage}\n` : output}${warnings}`;
+    return `${failureMessage ? `${output}\nGemini run failed: ${failureMessage}\n` : output}${warnings}${details}`;
   }
 
-  return `${failureMessage || "Gemini did not return a final message."}\n${warnings}`;
+  return `${failureMessage || "Gemini did not return a final message."}\n${warnings}${details}`;
 }
 
 export function renderStatusReport(report) {

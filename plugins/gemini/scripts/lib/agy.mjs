@@ -385,6 +385,7 @@ export function createStreamState() {
     textByStep: new Map(),
     toolCalls: new Map(),
     blockedToolCalls: [],
+    sandboxDeniedCommands: [],
     touchedFiles: new Set(),
     result: null,
     nonJsonLines: []
@@ -492,6 +493,9 @@ export function applyStreamEvent(state, event, onProgress = null) {
           if (blockedReason !== null) {
             state.blockedToolCalls.push({ toolName, reason: blockedReason });
           }
+          if (COMMAND_TOOLS.has(toolName) && /Operation not permitted/i.test(String(info.output ?? ""))) {
+            state.sandboxDeniedCommands.push(String(call.parameters?.CommandLine ?? parameters.CommandLine ?? toolName));
+          }
           if (call.status === "completed" && EDIT_TOOLS.has(toolName)) {
             const target = toolTarget(Object.keys(parameters).length ? parameters : call.parameters);
             if (target) {
@@ -564,6 +568,7 @@ export function finalizeStreamState(state, onProgress = null) {
     touchedFiles: [...state.touchedFiles],
     toolCalls: [...state.toolCalls.values()],
     blockedToolCalls: [...state.blockedToolCalls],
+    sandboxDeniedCommands: [...state.sandboxDeniedCommands],
     result: state.result,
     usage: result.usage ?? null,
     nonJsonLines: [...state.nonJsonLines]
@@ -911,6 +916,12 @@ async function runAgyProcess(cwd, { env, availability, args, prompt, write, guar
   }
   const guardLoaded = guard ? guard.isLoaded() : null;
   const warnings = [];
+  if (write && options.sandbox && finished.sandboxDeniedCommands.length > 0) {
+    const commands = [...new Set(finished.sandboxDeniedCommands)].slice(0, 3).map((command) => `\`${shorten(command, 60)}\``);
+    warnings.push(
+      `${finished.sandboxDeniedCommands.length} shell command(s) failed with "Operation not permitted" (${commands.join(", ")}), most likely because agy's sandbox keeps commands from writing to the repository and your home folder. If Gemini needs to build, install, or write files with commands here, run \`/gemini:setup --disable-sandbox\` for this repository.`
+    );
+  }
   if (guard && !guardLoaded && !error && finished.result) {
     warnings.push("agy did not run the plugin's tool guard hooks in this run. Run `/gemini:setup` to check the guard before relying on it.");
   }
