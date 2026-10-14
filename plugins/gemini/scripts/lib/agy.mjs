@@ -273,6 +273,12 @@ export function describeSandbox(config = {}, platform = process.platform) {
       };
 }
 
+export function describeWeb(config = {}) {
+  return config.web === false
+    ? { enabled: false, label: "off for write runs", detail: "Write-capable runs cannot use web, browser, or MCP tools. Shell commands keep network access." }
+    : { enabled: true, label: "on for write runs", detail: "Write-capable runs can use web, browser, and MCP tools. Read-only runs never can." };
+}
+
 /** Builds the agy argument vector for one headless run. */
 export function buildAgyArgs(options = {}) {
   const args = [
@@ -746,7 +752,8 @@ export async function runAgyTurn(cwd, options = {}) {
 
   const onProgress = options.onProgress ?? null;
   const write = Boolean(options.write);
-  const guard = options.guard === false ? null : createAgyGuard({ mode: write ? "write" : "read-only", workspaceRoot: cwd });
+  const guardMode = write ? (options.web === false ? "write-offline" : "write") : "read-only";
+  const guard = options.guard === false ? null : createAgyGuard({ mode: guardMode, workspaceRoot: cwd });
   const workspaceNote = guardWorkspaceNote(guard);
   const prompt = workspaceNote ? `${basePrompt}\n\n${workspaceNote}` : basePrompt;
   const args = buildAgyArgs({

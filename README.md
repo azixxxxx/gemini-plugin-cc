@@ -195,14 +195,18 @@ Examples:
 
 Checks whether agy is installed, recent enough, and signed in, and reports the sandbox, the tool guard, the models your account can use, and the review gate.
 
-It also manages two per-repository switches:
+It also manages three per-repository switches:
 
 ```bash
 /gemini:setup --enable-review-gate
 /gemini:setup --disable-review-gate
 /gemini:setup --enable-sandbox
 /gemini:setup --disable-sandbox
+/gemini:setup --enable-web
+/gemini:setup --disable-web
 ```
+
+`--disable-web` turns off web, browser, and MCP tools for write-capable runs in the repository; read-only runs never have them.
 
 When the review gate is enabled, the plugin uses a `Stop` hook to run a Gemini review of Claude's last turn against the current working tree. If that review finds issues, the stop is blocked so Claude can address them first.
 
@@ -283,6 +287,8 @@ The plugin also compares the git state before and after a read-only run and warn
 
 Rescue runs with `--write` (the default for `/gemini:rescue`) pass `--dangerously-skip-permissions`, so Gemini can edit files and run commands without prompts. The tool guard applies, and the prompt tells Gemini to leave its changes uncommitted.
 
+Web, browser, and MCP tools are available in write-capable runs unless `/gemini:setup --disable-web` turned them off for the repository. The switch does not cut network access for shell commands: agy's sandbox leaves the network on, so a command such as `curl` still works.
+
 ### Sandbox
 
 On macOS and Linux, write-capable runs also pass `--sandbox`, which turns on agy's terminal sandbox for the shell commands Gemini runs. With agy 1.3.5 on macOS, sandboxed commands:
@@ -357,6 +363,18 @@ That is the sign-in check from `/gemini:setup`. Each check is one short conversa
 ### Can I continue a Gemini job outside Claude Code?
 
 Yes. `/gemini:result` prints the conversation ID and an `agy --conversation <id>` command. Run it from the repository root.
+
+### Can reviews run commands such as `grep` or the tests?
+
+No. Headless agy only runs shell commands with `--dangerously-skip-permissions`, which also lifts agy's own refusal of file edits; the tool guard would then be the only thing keeping a review read-only, and the guard is only confirmed loaded at the first tool call. Reviews therefore view files only, and the plugin gives Gemini the diff and the repository's file list instead. Use `/gemini:rescue` when Gemini should run tests.
+
+### Is there a `/gemini:transfer` like `/codex:transfer`?
+
+No. OpenAI's transfer command relies on Codex importing Claude Code sessions natively, and agy has no such import: its `/resume` picker imports conversations only from the Antigravity app.
+
+### Does it work on Windows?
+
+Not supported. On Windows the tool guard is off, because its hook is a POSIX shell command, so read-only runs rely on agy's own permission checks and write runs have no commit or push guard. `/gemini:setup` warns about this.
 
 ## Development
 

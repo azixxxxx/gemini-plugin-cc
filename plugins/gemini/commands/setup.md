@@ -1,6 +1,6 @@
 ---
-description: Check whether the Antigravity CLI (agy) is ready for Gemini and optionally toggle the review gate or the agy sandbox
-argument-hint: '[--enable-review-gate|--disable-review-gate] [--enable-sandbox|--disable-sandbox]'
+description: Check whether the Antigravity CLI (agy) is ready for Gemini and optionally toggle the review gate, the agy sandbox, or web tools for write runs
+argument-hint: '[--enable-review-gate|--disable-review-gate] [--enable-sandbox|--disable-sandbox] [--enable-web|--disable-web]'
 allowed-tools: Bash(node:*)
 ---
 

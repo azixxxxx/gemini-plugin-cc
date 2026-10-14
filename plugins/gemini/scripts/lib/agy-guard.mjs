@@ -29,7 +29,8 @@ export const GUARD_HOOK_NAME = "gemini-plugin-cc-guard";
 // agy sorts workspace folders by path and treats the first one as the current directory, so the
 // guard folder name sorts late to keep the repository first when both share a parent.
 export const GUARD_DIR_PREFIX = "zz-gemini-guard-";
-export const GUARD_MODES = Object.freeze(["read-only", "write"]);
+// "write-offline" is a write run with web, browser, and MCP tools turned off for the repository.
+export const GUARD_MODES = Object.freeze(["read-only", "write", "write-offline"]);
 // Tells agy-runner.mjs which guard folder to remove if the companion dies before it can.
 export const GUARD_DIR_ENV = "GEMINI_COMPANION_GUARD_DIR";
 const GUARD_HOOK_TIMEOUT_SECONDS = 15;
@@ -165,6 +166,11 @@ function decideReadOnly(toolName, args, context) {
 }
 
 function decideWrite(toolName, args, context) {
+  if (context.offline && (NETWORK_TOOLS.has(toolName) || toolName.startsWith("browser_"))) {
+    return deny(
+      "Web, browser, and MCP tools are turned off for write runs in this repository; `/gemini:setup --enable-web` turns them back on. Work from the repository's files."
+    );
+  }
   if (SUBAGENT_TOOLS.has(toolName)) {
     return deny("Subagents are disabled in Gemini plugin runs: they report back after this headless run has ended. Do the work directly.");
   }
@@ -211,16 +217,17 @@ function decideWrite(toolName, args, context) {
 export function decideToolCall({ mode, workspaceRoot, guardDir, artifactDir = null, toolCall }) {
   const toolName = String(toolCall?.name ?? "").trim();
   if (!toolName) {
-    return mode === "write" ? null : deny("This read-only run could not identify the tool call, so it was blocked.");
+    return mode === "read-only" ? deny("This read-only run could not identify the tool call, so it was blocked.") : null;
   }
   const args = toolCall?.args && typeof toolCall.args === "object" ? toolCall.args : {};
   const context = {
+    offline: mode === "write-offline",
     workspaceRoot: realpathLoose(workspaceRoot),
     guardDir: realpathLoose(guardDir),
     artifactDir: typeof artifactDir === "string" && path.isAbsolute(artifactDir) ? realpathLoose(artifactDir) : null,
     temporaryRoots: temporaryRoots()
   };
-  return mode === "write" ? decideWrite(toolName, args, context) : decideReadOnly(toolName, args, context);
+  return mode === "read-only" ? decideReadOnly(toolName, args, context) : decideWrite(toolName, args, context);
 }
 
 function shellQuote(value) {

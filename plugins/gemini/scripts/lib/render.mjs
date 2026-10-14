@@ -253,6 +253,7 @@ export function renderSetupReport(report) {
     `- agy: ${report.agy.detail}`,
     `- auth: ${report.auth.detail}`,
     `- sandbox: ${report.sandbox.label}`,
+    ...(report.web ? [`- web: ${report.web.label}`] : []),
     ...(report.guard ? [`- tool guard: ${describeGuardStatus(report.guard)}`] : []),
     ...(report.models?.length > 0 ? [`- models: ${report.models.join(", ")}`] : []),
     `- review gate: ${report.reviewGateEnabled ? "enabled" : "disabled"}`,

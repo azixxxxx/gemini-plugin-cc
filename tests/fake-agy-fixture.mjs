@@ -37,6 +37,7 @@ export const FAKE_MODELS = [
  * - "alias-commit": commits through a git alias the guard's command check cannot see.
  * - "newer-version": reports agy 1.4.0, which the plugin has not verified.
  * - "sandbox-denied": runs `mkdir build`, which fails like agy's sandbox makes it fail.
+ * - "web-fetch": fetches a URL with read_url_content.
  */
 export function installFakeAgy(binDir, behavior = "ok") {
   const statePath = path.join(binDir, "fake-agy-state.json");
@@ -320,6 +321,9 @@ if (prompt.includes("Reply with exactly the word OK")) {
   });
   tool("run_command", { CommandLine: "git add app.js && git commit -m fix", Cwd: process.cwd() });
   finish("SUCCESS", { response: say("Fixed the bug in app.js.") });
+} else if (BEHAVIOR === "web-fetch") {
+  tool("read_url_content", { Url: "https://example.com" }, () => "<html>Example Domain</html>");
+  finish("SUCCESS", { response: say("Fetched the page.") });
 } else if (BEHAVIOR === "sandbox-denied") {
   tool("run_command", { CommandLine: "mkdir build && npm run build", Cwd: process.cwd() }, () =>
     args.includes("--sandbox") ? "mkdir: build: Operation not permitted\\r\\n" : "built\\r\\n"

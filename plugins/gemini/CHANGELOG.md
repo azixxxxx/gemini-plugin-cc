@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- `/gemini:setup --disable-web` turns off web, browser, and MCP tools for write-capable runs in a repository, and `--enable-web` turns them back on. Shell commands keep network access, because agy's sandbox does not cut it. Read-only runs never had these tools.
+- `/gemini:setup` warns on Windows, where the tool guard is off.
+- The README explains two decisions for 1.0: reviews do not run shell commands, because that would need `--dangerously-skip-permissions` and leave the guard as the only barrier; and there is no `/gemini:transfer`, because agy cannot import Claude Code sessions.
+
 ## 0.4.0
 
 - Review and task output ends with the tool calls the plugin's guard blocked, grouped by tool and reason, and the run's token usage. The JSON output carries `blockedToolCalls` and `usage`.

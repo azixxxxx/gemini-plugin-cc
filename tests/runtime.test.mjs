@@ -213,6 +213,33 @@ test("setup toggles the review gate and the sandbox per repository", () => {
   const conflict = companion(["setup", "--enable-sandbox", "--disable-sandbox"], { cwd: repo, env });
   assert.notEqual(conflict.status, 0);
   assert.match(conflict.stderr, /Choose either --enable-sandbox or --disable-sandbox/);
+  const webConflict = companion(["setup", "--enable-web", "--disable-web"], { cwd: repo, env });
+  assert.notEqual(webConflict.status, 0);
+  assert.match(webConflict.stderr, /Choose either --enable-web or --disable-web/);
+});
+
+test("the web switch turns web tools off for write runs in one repository", { skip: !GUARDED }, () => {
+  const repo = makeRepo();
+  const { env } = setupFake("web-fetch");
+
+  const online = JSON.parse(companion(["task", "--write", "--json", "fetch the page"], { cwd: repo, env }).stdout);
+  assert.deepEqual(online.blockedToolCalls, []);
+
+  const toggled = JSON.parse(companion(["setup", "--disable-web", "--json"], { cwd: repo, env }).stdout);
+  assert.equal(toggled.web.enabled, false);
+  assert.ok(toggled.actionsTaken.some((action) => /Turned off web, browser, and MCP tools for write runs/.test(action)));
+  assert.match(companion(["setup"], { cwd: repo, env }).stdout, /- web: off for write runs/);
+
+  const offline = JSON.parse(companion(["task", "--write", "--json", "fetch the page"], { cwd: repo, env }).stdout);
+  assert.equal(offline.blockedToolCalls.length, 1);
+  assert.match(offline.blockedToolCalls[0].reason, /turned off for write runs in this repository/);
+
+  const background = JSON.parse(companion(["task", "--write", "--background", "--json", "fetch the page"], { cwd: repo, env }).stdout);
+  assert.equal(companion(["status", background.jobId, "--wait", "--timeout-ms", "30000", "--json"], { cwd: repo, env }).status, 0);
+  const stored = JSON.parse(companion(["result", background.jobId, "--json"], { cwd: repo, env }).stdout);
+  assert.equal(stored.storedJob.result.blockedToolCalls.length, 1);
+
+  assert.equal(JSON.parse(companion(["setup", "--enable-web", "--json"], { cwd: repo, env }).stdout).web.enabled, true);
 });
 
 test("review runs read-only with the diff inline and agy's structured output", () => {

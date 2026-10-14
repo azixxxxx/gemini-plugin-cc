@@ -177,7 +177,7 @@ test("setup command points to the Gemini app's agy and keeps sign-in in the user
   const setup = read("commands/setup.md");
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
 
-  assert.match(setup, /argument-hint:\s*'\[--enable-review-gate\|--disable-review-gate\] \[--enable-sandbox\|--disable-sandbox\]'/);
+  assert.match(setup, /argument-hint:\s*'\[--enable-review-gate\|--disable-review-gate\] \[--enable-sandbox\|--disable-sandbox\] \[--enable-web\|--disable-web\]'/);
   assert.match(setup, /allowed-tools:\s*Bash\(node:\*\)$/m);
   assert.doesNotMatch(setup, /npm install/);
   assert.match(setup, /`agy install`/);

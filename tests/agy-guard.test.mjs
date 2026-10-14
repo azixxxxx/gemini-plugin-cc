@@ -92,6 +92,18 @@ test("both modes may use agy's own folder for the current conversation", () => {
   assert.equal(decideToolCall({ mode: "read-only", workspaceRoot: root, guardDir, artifactDir: "relative/dir", toolCall: { name: "view_file", args: { AbsolutePath: "/etc/hosts" } } })?.decision, "deny");
 });
 
+test("write runs with the web turned off deny web, browser, and MCP tools only", () => {
+  const root = makeWorkspace();
+  const guardDir = fs.realpathSync(makeTempDir());
+  for (const name of ["read_url_content", "search_web", "browser_click_element", "call_mcp_tool"]) {
+    assert.match(decide("write-offline", root, guardDir, name).reason, /turned off for write runs in this repository/, name);
+  }
+  assert.equal(decide("write-offline", root, guardDir, "write_to_file", { TargetFile: path.join(root, "a.js") }), null);
+  assert.equal(decide("write-offline", root, guardDir, "run_command", { CommandLine: "npm test" }), null);
+  assert.match(decide("write-offline", root, guardDir, "run_command", { CommandLine: "git push" }).reason, /blocks `git push`/);
+  assert.equal(decideToolCall({ mode: "write-offline", workspaceRoot: root, guardDir, toolCall: null }), null);
+});
+
 test("findGuardedGitCommand catches commit and push in common shell forms", () => {
   const blocked = {
     "git commit -m x": "git commit",

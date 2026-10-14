@@ -13,6 +13,7 @@ import {
   agySettingsPath,
   DEFAULT_CONTINUE_PROMPT,
   describeSandbox,
+  describeWeb,
   ensureAgyAvailable,
   findRiskyAllowRules,
   getAgyAuthStatus,
@@ -90,7 +91,7 @@ function printUsage() {
   console.log(
     [
       "Usage:",
-      "  node scripts/gemini-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--enable-sandbox|--disable-sandbox] [--json]",
+      "  node scripts/gemini-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--enable-sandbox|--disable-sandbox] [--enable-web|--disable-web] [--json]",
       "  node scripts/gemini-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [--model <model|pro|flash>] [--effort <low|medium|high|xhigh|max>]",
       "  node scripts/gemini-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [--model <model|pro|flash>] [--effort <level>] [focus text]",
       "  node scripts/gemini-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model|pro|flash>] [--effort <low|medium|high|xhigh|max>] [prompt]",
@@ -221,6 +222,10 @@ function resolveSandbox(workspaceRoot) {
   return describeSandbox(getConfig(workspaceRoot)).enabled;
 }
 
+function resolveWeb(workspaceRoot) {
+  return describeWeb(getConfig(workspaceRoot)).enabled;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -250,11 +255,17 @@ async function buildSetupReport(cwd, actionsTaken = []) {
   const agyStatus = getAgyAvailability(cwd, { refresh: true });
   const config = getConfig(workspaceRoot);
   const sandbox = describeSandbox(config);
+  const web = describeWeb(config);
   const authStatus = await getAgyAuthStatus(cwd);
   // The sign-in check is a guarded run, so it also shows whether agy loaded the tool guard.
   const guard = { ...describeGuard(), loaded: authStatus.guardLoaded ?? null };
 
   const warnings = [];
+  if (process.platform === "win32") {
+    warnings.push(
+      "Windows is not supported: the plugin's tool guard is off there, so read-only runs rely on agy's own permission checks and write runs have no commit or push guard."
+    );
+  }
   if (agyStatus.available && !VERIFIED_AGY_VERSIONS.includes(agyStatus.version)) {
     warnings.push(
       `agy ${agyStatus.version} has not been verified with this plugin version (verified: ${VERIFIED_AGY_VERSIONS.join(", ")}). It will probably work; if a command misbehaves, report it at https://github.com/azixxxxx/gemini-plugin-cc/issues.`
@@ -297,6 +308,7 @@ async function buildSetupReport(cwd, actionsTaken = []) {
     agy: agyStatus,
     auth: authStatus,
     sandbox,
+    web,
     guard,
     models,
     reviewGateEnabled: Boolean(config.stopReviewGate),
@@ -309,7 +321,7 @@ async function buildSetupReport(cwd, actionsTaken = []) {
 async function handleSetup(argv) {
   const { options } = parseCommandInput(argv, {
     valueOptions: ["cwd"],
-    booleanOptions: ["json", "enable-review-gate", "disable-review-gate", "enable-sandbox", "disable-sandbox"]
+    booleanOptions: ["json", "enable-review-gate", "disable-review-gate", "enable-sandbox", "disable-sandbox", "enable-web", "disable-web"]
   });
 
   if (options["enable-review-gate"] && options["disable-review-gate"]) {
@@ -317,6 +329,9 @@ async function handleSetup(argv) {
   }
   if (options["enable-sandbox"] && options["disable-sandbox"]) {
     throw new Error("Choose either --enable-sandbox or --disable-sandbox.");
+  }
+  if (options["enable-web"] && options["disable-web"]) {
+    throw new Error("Choose either --enable-web or --disable-web.");
   }
 
   const cwd = resolveCommandCwd(options);
@@ -337,6 +352,14 @@ async function handleSetup(argv) {
   } else if (options["disable-sandbox"]) {
     setConfig(workspaceRoot, "sandbox", false);
     actionsTaken.push(`Disabled the Gemini sandbox for ${workspaceRoot}.`);
+  }
+
+  if (options["enable-web"]) {
+    setConfig(workspaceRoot, "web", true);
+    actionsTaken.push(`Turned on web, browser, and MCP tools for write runs in ${workspaceRoot}.`);
+  } else if (options["disable-web"]) {
+    setConfig(workspaceRoot, "web", false);
+    actionsTaken.push(`Turned off web, browser, and MCP tools for write runs in ${workspaceRoot}.`);
   }
 
   const finalReport = await buildSetupReport(cwd, actionsTaken);
@@ -539,6 +562,7 @@ async function executeTaskRun(request) {
       effort: request.effort,
       write,
       sandbox: Boolean(request.sandbox),
+      web: request.web !== false,
       onProgress: request.onProgress
     });
   const result = write ? await runWriteGuarded(workspaceRoot, run) : await runReadOnlyGuarded(workspaceRoot, run);
@@ -658,7 +682,7 @@ function buildTaskJob(workspaceRoot, taskMetadata, write) {
   });
 }
 
-function buildTaskRequest({ cwd, model, effort, prompt, write, sandbox, resumeLast, jobId }) {
+function buildTaskRequest({ cwd, model, effort, prompt, write, sandbox, web, resumeLast, jobId }) {
   return {
     cwd,
     model,
@@ -666,6 +690,7 @@ function buildTaskRequest({ cwd, model, effort, prompt, write, sandbox, resumeLa
     prompt,
     write,
     sandbox,
+    web,
     resumeLast,
     jobId
   };
@@ -815,6 +840,7 @@ async function handleTask(argv) {
   }
   const write = Boolean(options.write);
   const sandbox = resolveSandbox(workspaceRoot);
+  const web = resolveWeb(workspaceRoot);
   const taskMetadata = buildTaskRunMetadata({
     prompt,
     resumeLast
@@ -832,6 +858,7 @@ async function handleTask(argv) {
       prompt,
       write,
       sandbox,
+      web,
       resumeLast,
       jobId: job.id
     });
@@ -851,6 +878,7 @@ async function handleTask(argv) {
         prompt,
         write,
         sandbox,
+        web,
         resumeLast,
         jobId: job.id,
         onProgress: progress
