@@ -147,7 +147,7 @@ test("the guard marks itself loaded from a PreInvocation hook that prints JSON",
     const [handler] = hooks[GUARD_HOOK_NAME].PreInvocation;
     assert.equal(handler.type, "command");
     assert.equal(guard.isLoaded(), false);
-    const output = execFileSync("sh", ["-c", handler.command], { cwd: path.join(guard.directory, ".agents"), encoding: "utf8" });
+    const output = execFileSync("sh", ["-c", handler.command], { cwd: path.join(guard.directory, ".agents"), input: "{\"invocationNum\":1}", encoding: "utf8" });
     assert.deepEqual(JSON.parse(output), {});
     assert.equal(guard.isLoaded(), true);
   } finally {

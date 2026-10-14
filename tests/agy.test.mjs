@@ -251,7 +251,7 @@ test("runAgyTurn sends the prompt as a stream-json message and runs inside the g
   const repo = makeTempDir();
   const result = await runAgyTurn(repo, { prompt: "fix the bug", write: true, sandbox: true, env });
 
-  assert.equal(result.status, 0, result.error?.message);
+  assert.equal(result.status, 0, `${result.error?.message}\n${result.stderr}`);
   assert.equal(result.sessionId, "conv-1");
   assert.equal(result.guarded, process.platform !== "win32");
   assert.equal(result.guardLoaded, process.platform !== "win32" ? true : null);
@@ -274,7 +274,7 @@ test("read-only runs keep going when the guard blocks a tool, and stop without i
   const repo = makeTempDir();
 
   const guarded = await runAgyTurn(repo, { prompt: "look around", env });
-  assert.equal(guarded.status, 0, guarded.error?.message);
+  assert.equal(guarded.status, 0, `${guarded.error?.message}\n${guarded.stderr}`);
   assert.match(guarded.finalMessage, /Handled the requested task/);
   assert.deepEqual(
     guarded.blockedToolCalls.map((call) => call.toolName),

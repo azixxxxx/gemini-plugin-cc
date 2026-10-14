@@ -351,8 +351,9 @@ export function createAgyGuard({ mode, workspaceRoot, nodePath = process.execPat
 
   const command = `${[nodePath, GUARD_HOOK_SCRIPT, mode, root, directory].map(shellQuote).join(" ")} || printf '%s\\n' ${shellQuote(JSON.stringify(GUARD_FAILURE_DECISION))}`;
   const markerPath = path.join(directory, LIVENESS_MARKER);
-  // PreInvocation hooks must print JSON; `{}` means "nothing to inject".
-  const livenessCommand = `touch ${shellQuote(markerPath)} && printf '%s\\n' '{}'`;
+  // PreInvocation hooks must print JSON; `{}` means "nothing to inject". The hook reads its
+  // payload first: exiting before agy has written it would hand agy an EPIPE.
+  const livenessCommand = `cat > /dev/null; touch ${shellQuote(markerPath)} && printf '%s\\n' '{}'`;
   const hooks = {
     [GUARD_HOOK_NAME]: {
       PreInvocation: [{ type: "command", command: livenessCommand, timeout: GUARD_HOOK_TIMEOUT_SECONDS }],
