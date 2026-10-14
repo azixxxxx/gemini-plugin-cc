@@ -376,6 +376,25 @@ No. OpenAI's transfer command relies on Codex importing Claude Code sessions nat
 
 Not supported. On Windows the tool guard is off, because its hook is a POSIX shell command, so read-only runs rely on agy's own permission checks and write runs have no commit or push guard. `/gemini:setup` warns about this.
 
+## Troubleshooting
+
+Run `/gemini:setup` first: it checks agy, the sign-in, the tool guard, and the models your account can use. The messages below are the ones the plugin prints.
+
+| Message | What to do |
+| --- | --- |
+| `The Antigravity CLI (agy) is not available` | Install agy (Gemini desktop app, or [antigravity.google/download](https://antigravity.google/download)). If it is installed but `agy` does not start in your terminal, it is not on your `PATH`: run `agy install`, link it into `~/.local/bin`, or set `GEMINI_COMPANION_AGY_PATH`. |
+| `agy is not signed in or its sign-in expired` | Run `agy` in a terminal, type `/login`, and sign in. |
+| `Antigravity refused this account` | Antigravity is not available for that account or location. Sign in with another account or from a supported location. |
+| `Gemini hit a usage limit: Individual quota reached ... Resets in ...` | agy counts quota per model. Pick another model from `agy models` with `--model`, or wait for the reset. |
+| `agy rejected the model or effort` | The model name is unknown, or the model does not support that `--effort`. `/gemini:setup` lists your models. |
+| `agy did not load the plugin's tool guard` | The installed agy no longer loads the guard. Update the plugin, and report your agy version if that does not help. |
+| `shell command(s) failed with "Operation not permitted"` | agy's sandbox keeps commands from writing to the repository. Run `/gemini:setup --disable-sandbox` if Gemini needs to build or install. |
+| `Gemini did not return valid structured JSON` | The review model answered in prose. Rerun the review, or pick another model with `--model`. |
+
+## Versioning
+
+The plugin follows [semantic versioning](https://semver.org). From 1.0.0 on, the slash commands, their flags, and the companion's `--json` output fields are the public interface; a change that breaks them needs a new major version. The agy versions the plugin was verified with are listed in the release notes and in `VERIFIED_AGY_VERSIONS`.
+
 ## Development
 
 ```bash
@@ -384,7 +403,7 @@ npm test
 npm run build
 ```
 
-`npm test` uses a fake `agy` executable that speaks agy's stream-json protocol and runs the guard's hooks, and makes no network calls. `npm run build` type-checks the runtime scripts.
+`npm test` uses a fake `agy` executable that speaks agy's stream-json protocol and runs the guard's hooks, and makes no network calls. `npm run build` type-checks the runtime scripts. See [CONTRIBUTING.md](CONTRIBUTING.md) for the release process and [SECURITY.md](SECURITY.md) for the threat model and how to report a vulnerability.
 
 `npm run test:live` checks the agy behavior the plugin relies on against the real agy: hook discovery, guard denials, the liveness marker, the sandbox, structured output, resume, and error shapes. It sends about seven short prompts that count against your agy quota, so it only runs with `GEMINI_PLUGIN_LIVE=1`. agy counts quota per model, so `GEMINI_PLUGIN_LIVE_MODEL` can point it at another model:
 

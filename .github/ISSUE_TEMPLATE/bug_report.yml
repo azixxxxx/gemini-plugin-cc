@@ -1,0 +1,44 @@
+name: Bug report
+description: Something in the plugin does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For security problems, use the [private vulnerability report](https://github.com/azixxxxx/gemini-plugin-cc/security/advisories/new) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you got instead.
+      placeholder: "/gemini:review --background showed ... but I expected ..."
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Output of /gemini:setup
+      description: It shows the plugin's view of agy, the sign-in, the sandbox, and the tool guard. Remove anything private.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      placeholder: "0.5.0"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Node.js version
+      placeholder: "macOS 27.0, Node.js 24.13.0"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Job log or error output
+      description: For background jobs, the log path is in /gemini:status <job-id>.
+      render: text

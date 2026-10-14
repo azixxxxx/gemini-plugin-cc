@@ -15,6 +15,8 @@ Key facts:
 - [README](https://github.com/azixxxxx/gemini-plugin-cc/blob/main/README.md): install, commands, how it works, safety model, FAQ
 - [Changelog](https://github.com/azixxxxx/gemini-plugin-cc/blob/main/plugins/gemini/CHANGELOG.md): release history
 - [NOTICE](https://github.com/azixxxxx/gemini-plugin-cc/blob/main/NOTICE): what changed relative to openai/codex-plugin-cc
+- [SECURITY](https://github.com/azixxxxx/gemini-plugin-cc/blob/main/SECURITY.md): threat model, what the tool guard does and does not protect against
+- [CONTRIBUTING](https://github.com/azixxxxx/gemini-plugin-cc/blob/main/CONTRIBUTING.md): development, live agy tests, release process
 
 ## Optional
 

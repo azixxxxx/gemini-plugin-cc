@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0
+
+First stable release. From this version on, the slash commands, their flags, and the companion's `--json` output fields follow semantic versioning.
+
+- Verified with agy 1.3.5: the live contract suite passes, and live reviews and write tasks ran end to end.
+- [SECURITY.md](../../SECURITY.md) describes what the plugin protects against and what it does not, and vulnerabilities can be reported privately on GitHub.
+- [CONTRIBUTING.md](../../CONTRIBUTING.md) covers development, the live agy tests, and the release process. The repository has issue and pull request templates.
+- The README has Troubleshooting and Versioning sections, and the project page lists the safety model's limits and answers more questions.
+
 ## 0.5.0
 
 - `/gemini:setup --disable-web` turns off web, browser, and MCP tools for write-capable runs in a repository, and `--enable-web` turns them back on. Shell commands keep network access, because agy's sandbox does not cut it. Read-only runs never had these tools.

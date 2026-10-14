@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/azixxxxx/gemini-plugin-cc/security/advisories/new
+    about: Report vulnerabilities privately, not in a public issue.
+  - name: Original Codex plugin (OpenAI)
+    url: https://github.com/openai/codex-plugin-cc
+    about: Issues with OpenAI's codex-plugin-cc belong in its own repository.
